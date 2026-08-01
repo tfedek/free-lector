@@ -111,7 +111,7 @@ const Exporter = (() => {
      */
     function hasAnyProofreadingCheck(options) {
         const proofKeys = ['brackets','quotes','markdown','spacing','scriptMix','greek',
-            'duplicates','toc','numbering','dashes','bibliography','urls','footnotes',
+            'duplicates','toc','numbering','bibliography','urls','footnotes',
             'repetition','capsWords','emptyHeadings'];
         return proofKeys.some(k => options[k] === true);
     }

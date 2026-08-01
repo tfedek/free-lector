@@ -51,7 +51,7 @@ function makeDocMap(elements, opts = {}) {
         tableCount: mapped.filter(e=>e.type==='table').length,
         headingCount: mapped.filter(e=>e.type==='heading').length };
 }
-function allOpts() { return {brackets:true,quotes:true,markdown:true,spacing:true,scriptMix:true,greek:true,duplicates:true,toc:true,numbering:true,dashes:true,bibliography:true,urls:true,footnotes:true,repetition:true,capsWords:true,emptyHeadings:true}; }
+function allOpts() { return {brackets:true,quotes:true,markdown:true,spacing:true,scriptMix:true,greek:true,duplicates:true,toc:true,numbering:true,bibliography:true,urls:true,footnotes:true,repetition:true,capsWords:true,emptyHeadings:true}; }
 
 /** Helper: create minimal DOCX ZIP as ArrayBuffer */
 async function createDocxZip(documentXml, extras = {}) {
@@ -82,12 +82,6 @@ test('unmatched typographic quotes detected globally', () => {
     const doc = makeDocMap([{text:'Rekao \u201ezdrav ali.'}]);
     const {findings} = RuleEngine.runAudit(doc, allOpts());
     assert(findings.some(f=>f.rationale.includes('Neupareni')));
-});
-test('dashes check disabled (no-op)', () => {
-    const doc = makeDocMap([{text:'Period 484-425. Also -- here.'}]);
-    const {findings} = RuleEngine.runAudit(doc, allOpts());
-    const dashFindings = findings.filter(f=>f.rationale&&(f.rationale.includes('en-dash')||f.rationale.includes('em-dash')));
-    assert.strictEqual(dashFindings.length, 0, 'Dashes check should be disabled');
 });
 test('script mixing detected', () => {
     const doc = makeDocMap([{text:'\u041Cadmo'}]);
@@ -289,15 +283,6 @@ test('H2 followed by H2 reports warning', () => {
 // ==========================================
 // ISO date exclusion
 // ==========================================
-console.log('\nISO datum:');
-test('ISO date 2026-08-01 not flagged (dashes disabled)', () => {
-    // Dashes check is removed — this is a no-op confirmation
-    const doc = makeDocMap([{text:'Datum 2026-08-01 i raspon 484-425.'}]);
-    const {findings} = RuleEngine.runAudit(doc, {dashes:true});
-    const dash = findings.filter(f=>f.category==='Tipografija'&&f.rationale&&f.rationale.includes('en-dash'));
-    assert.strictEqual(dash.length, 0);
-});
-
 // ==========================================
 // Cyrillic ALL-CAPS
 // ==========================================

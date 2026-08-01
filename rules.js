@@ -423,42 +423,6 @@ const RuleEngine = (() => {
     }
 
 
-    // ==========================================
-    // DASHES — no paren skip, exclude ISO dates/phones/ISBN/identifiers
-    // ==========================================
-    function checkDashes(docMap) {
-        const findings = []; let scannedCount = 0, skippedCount = 0;
-        for (const el of docMap.elements) {
-            if (!el.text) { skippedCount++; continue; }
-            scannedCount++; let m;
-
-            // Numeric ranges with hyphen
-            const rangeRe = /(\d{1,4})\s*-\s*(\d{1,4})/g;
-            while ((m = rangeRe.exec(el.text)) !== null) {
-                const fullMatch = m[0];
-                const ctx20 = el.text.substring(Math.max(0, m.index-20), m.index + fullMatch.length + 20);
-
-                // Exclude ISO dates (2026-08-01)
-                if (ctx20.match(/\d{4}-\d{2}-\d{2}/)) continue;
-                // Exclude phone numbers (patterns with + prefix or 3+ hyphens/spaces in sequence)
-                if (ctx20.match(/\+\d[\d\s-]{6,}/) || ctx20.match(/\d[\d-]{2,}\d-\d[\d-]{2,}/)) continue;
-                // Exclude ISBN/ISSN (10+ digit sequences with hyphens)
-                if (ctx20.match(/\d{1,5}-\d{1,5}-\d{1,5}/)) continue;
-                // Exclude identifiers (letter immediately before first digit, no space)
-                if (m.index > 0 && /[A-Za-z]/.test(el.text[m.index - 1])) continue;
-
-                findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.92, original: fullMatch, replacement: `${m[1]}\u2013${m[2]}`, rationale: 'Raspon treba en-dash (\u2013), ne crticu.', autoFixable: true }));
-            }
-
-            // Double hyphen as em-dash
-            const dh = /--/g;
-            while ((m = dh.exec(el.text)) !== null) {
-                const ctx = getContext(el.text, m.index, 20);
-                findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.90, original: ctx, replacement: ctx.replace('--', '\u2014'), rationale: 'Dvostruka crtica → em-dash (\u2014).', autoFixable: true }));
-            }
-        }
-        return { findings, scannedCount, skippedCount };
-    }
 
     // ==========================================
     // BIBLIOGRAPHY — continues through subheadings until same/higher level heading
