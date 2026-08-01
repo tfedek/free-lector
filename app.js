@@ -73,6 +73,13 @@
 
     function handleFile(file) {
         const ext = file.name.split('.').pop().toLowerCase();
+
+        // Block .docm BEFORE checking allowed list
+        if (ext === 'docm') {
+            alert('Makro-omogućeni dokumenti (.docm) nisu podržani.');
+            return;
+        }
+
         const allowed = ['docx', 'md', 'txt', 'text'];
         if (!allowed.includes(ext)) {
             alert(`Nepodržan format: .${ext}\nPodržani formati: .docx, .md, .txt`);
@@ -80,10 +87,6 @@
         }
         if (file.size > 20 * 1024 * 1024) {
             alert('Fajl je prevelik (maksimum 20MB).');
-            return;
-        }
-        if (ext === 'docm') {
-            alert('Makro-omogućeni dokumenti (.docm) nisu podržani.');
             return;
         }
         currentFile = file;
@@ -110,6 +113,25 @@
         });
         options.auditMode = document.querySelector('input[name="audit-mode"]:checked').value;
         options.houseStyle = document.getElementById('house-style').value;
+
+        // Audit mode overrides: restrict active checks based on selected mode
+        if (options.auditMode === 'PROOFREADING') {
+            // Only basic technical checks
+            const proofOnly = new Set(['brackets', 'quotes', 'spacing', 'scriptMix', 'duplicates', 'dashes']);
+            for (const key of Object.keys(options)) {
+                if (key !== 'auditMode' && key !== 'houseStyle' && !proofOnly.has(key)) {
+                    options[key] = false;
+                }
+            }
+        } else if (options.auditMode === 'BIBLIOGRAPHY') {
+            // Only bibliography-related checks
+            const bibOnly = new Set(['bibliography', 'brackets', 'spacing']);
+            for (const key of Object.keys(options)) {
+                if (key !== 'auditMode' && key !== 'houseStyle' && !bibOnly.has(key)) {
+                    options[key] = false;
+                }
+            }
+        }
 
         document.getElementById('upload-section').classList.add('hidden');
         progressSection.classList.remove('hidden');
@@ -186,8 +208,8 @@
             // Skip if original and replacement are identical
             if (f.original === f.replacement) continue;
 
-            // Skip duplicates (same original + category + element)
-            const key = `${f.paragraphId}::${f.category}::${f.original}`;
+            // Skip duplicates (same original + category + element + table cell)
+            const key = `${f.paragraphId}::${f.tableId || ''}::${f.cellId || ''}::${f.category}::${f.original}`;
             if (seen.has(key)) continue;
             seen.add(key);
 
@@ -334,13 +356,30 @@
         s.verify = open.filter(f => f.priority === 'PROVERITI').length;
         s.recommendations = open.filter(f => f.priority === 'PREPORUKA').length;
         s.blockers = open.filter(f => f.priority === 'BLOCKER').length;
-        s.can_be_marked_final = s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
+        s.total_occurrences = open.length;
+        s.total_finding_categories = new Set(open.map(f => f.category)).size;
 
-        if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) {
+        const requiredChecksComplete =
+            currentAuditJson.scope.grammar === true &&
+            currentAuditJson.scope.visual_layout === true;
+
+        s.can_be_marked_final =
+            requiredChecksComplete &&
+            s.blockers === 0 &&
+            s.mandatory === 0 &&
+            s.verify === 0;
+
+        if (s.can_be_marked_final) {
+            s.final_assessment = 'Audit je završen. Sve provere su prošle bez nalaza.';
+        } else if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) {
             s.final_assessment = 'Determinističke provere su završene. Gramatika, stil i vizuelni prelom nisu provereni.';
         } else {
             s.final_assessment = `Dokument ima ${s.mandatory} obaveznih ispravki i ${s.blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
         }
+
+        // Update audit_status.status
+        currentAuditJson.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
+
         updateStatsDisplay(currentAuditJson);
     }
 

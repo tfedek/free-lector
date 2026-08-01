@@ -1,0 +1,24 @@
+{
+  "name": "free-lector",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tfedek/free-lector.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/tfedek/free-lector/issues"
+  },
+  "homepage": "https://github.com/tfedek/free-lector#readme",
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.9.10"
+  }
+}

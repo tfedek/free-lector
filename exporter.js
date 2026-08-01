@@ -37,7 +37,7 @@ const Exporter = (() => {
         return {
             document: {
                 name: docMap.name,
-                document_id: generateDocId(docMap.name),
+                document_id: generateDocId(docMap.name, docMap.rawText),
                 version_id: new Date().toISOString(),
                 language: options.houseStyle || 'sr-Latn',
                 word_count: docMap.wordCount,
@@ -49,18 +49,18 @@ const Exporter = (() => {
             },
             scope: {
                 proofreading: true,
-                grammar: false,
-                style: false,
+                grammar: options.aiGrammar === true,
+                style: options.aiStyle === true,
                 bibliography: options.bibliography || false,
-                visual_layout: false,
+                visual_layout: options.visualLayout === true,
                 fact_checking: false,
                 web_research: false,
                 note: 'Samo determinističke provere (rule-based). Jezička analiza zahteva AI modul.',
             },
             audit_status: {
-                status: 'DELIMIČAN',
-                linguistic_analysis: 'NIJE IZVRŠENA',
-                visual_review: 'NIJE IZVRŠEN',
+                status: canBeMarkedFinal ? 'POTPUN' : 'DELIMIČAN',
+                linguistic_analysis: options.aiGrammar === true ? 'IZVRŠENA' : 'NIJE IZVRŠENA',
+                visual_review: options.visualLayout === true ? 'IZVRŠEN' : 'NIJE IZVRŠEN',
             },
             summary: {
                 total_finding_categories: new Set(findings.map(f => f.category)).size,
@@ -293,13 +293,44 @@ const Exporter = (() => {
 
     /**
      * Apply export filter (all findings or only open)
+     * Creates a deep copy and recalculates summary/global_patterns
      */
     function applyExportFilter(auditJson, exportFilter) {
         if (!exportFilter || exportFilter === 'all') return auditJson;
 
-        // Only open findings
-        const filtered = { ...auditJson };
-        filtered.findings = auditJson.findings.filter(f => f.status === 'OPEN');
+        const filtered = structuredClone(auditJson);
+        filtered.findings = filtered.findings.filter(f => f.status === 'OPEN');
+
+        // Recalculate summary
+        const openFindings = filtered.findings;
+        const s = filtered.summary;
+        s.blockers = openFindings.filter(f => f.priority === 'BLOCKER').length;
+        s.mandatory = openFindings.filter(f => f.priority === 'OBAVEZNO').length;
+        s.verify = openFindings.filter(f => f.priority === 'PROVERITI').length;
+        s.recommendations = openFindings.filter(f => f.priority === 'PREPORUKA').length;
+        s.total_occurrences = openFindings.length;
+        s.total_finding_categories = new Set(openFindings.map(f => f.category)).size;
+
+        // Recalculate final gate
+        const scope = filtered.scope;
+        const requiredComplete = scope.grammar === true && scope.visual_layout === true;
+        s.can_be_marked_final = requiredComplete &&
+            s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
+
+        if (s.can_be_marked_final) {
+            s.final_assessment = 'Audit je završen. Sve provere su prošle bez nalaza.';
+        } else if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) {
+            s.final_assessment = 'Determinističke provere su završene. Gramatika, stil i vizuelni prelom nisu provereni.';
+        } else {
+            s.final_assessment = `Dokument ima ${s.mandatory} obaveznih ispravki i ${s.blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
+        }
+
+        // Update audit_status.status
+        filtered.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
+
+        // Recalculate global patterns
+        filtered.global_patterns = extractGlobalPatterns(openFindings);
+
         return filtered;
     }
 
@@ -335,10 +366,24 @@ const Exporter = (() => {
     }
 
     /**
-     * Generate a simple document ID from filename
+     * Generate document ID from full content using FNV-1a hash.
+     * Hashes entire rawText for uniqueness (not truncated).
      */
-    function generateDocId(name) {
-        return 'doc-' + name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 16).toLowerCase();
+    function generateDocId(name, rawText) {
+        const input = (name || '') + '::' + (rawText || '');
+        // FNV-1a 64-bit emulated with two 32-bit halves for better distribution
+        let h1 = 0x811c9dc5;
+        let h2 = 0x01000193;
+        for (let i = 0; i < input.length; i++) {
+            const c = input.charCodeAt(i);
+            h1 ^= c;
+            h1 = Math.imul(h1, 0x01000193);
+            h2 ^= (c ^ 0x5f);
+            h2 = Math.imul(h2, 0x01000193);
+        }
+        const part1 = (h1 >>> 0).toString(36);
+        const part2 = (h2 >>> 0).toString(36);
+        return 'doc-' + part1 + part2;
     }
 
     // Public API
@@ -348,6 +393,7 @@ const Exporter = (() => {
         downloadMarkdown,
         downloadJson,
         generateMarkdown,
+        applyExportFilter,
     };
 })();
 

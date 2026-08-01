@@ -70,7 +70,95 @@ const RuleEngine = (() => {
             }
         }
 
+        // Additional pass: table cell-level checks (respects enabled options)
+        checkTableCells(docMap, findings, options);
+
         return { findings, passedChecks };
+    }
+
+    /**
+     * Additional pass: check table cells individually.
+     * Only runs checks that are enabled in options.
+     * Findings include tableId/rowId/cellId/rowIndex/columnIndex.
+     */
+    function checkTableCells(docMap, findings, options) {
+        const doSpacing = options.spacing === true;
+        const doBrackets = options.brackets === true;
+        const doScriptMix = options.scriptMix === true;
+
+        if (!doSpacing && !doBrackets && !doScriptMix) return;
+
+        for (const el of docMap.elements) {
+            if (el.type !== 'table' || !el.rows) continue;
+
+            for (const row of el.rows) {
+                for (const cell of row) {
+                    if (!cell.text || cell.text.trim().length === 0) continue;
+                    const text = cell.text;
+                    const cellMeta = {
+                        tableId: cell.tableId,
+                        rowId: cell.rowId,
+                        cellId: cell.cellId,
+                        rowIndex: cell.rowIndex,
+                        columnIndex: cell.columnIndex,
+                    };
+
+                    if (doSpacing) {
+                        const doubleSpace = /  +/g;
+                        let m;
+                        while ((m = doubleSpace.exec(text)) !== null) {
+                            const ctx = getContext(text, m.index, 20);
+                            findings.push(makeFinding({
+                                element: el, category: 'Razmaci', priority: 'OBAVEZNO',
+                                confidence: 0.99, original: ctx,
+                                replacement: ctx.replace(/  +/g, ' '),
+                                rationale: 'Višestruki razmak u ćeliji tabele.',
+                                autoFixable: true, ...cellMeta,
+                            }));
+                        }
+                    }
+
+                    if (doScriptMix) {
+                        const words = text.match(/[\p{L}\p{M}]+/gu) || [];
+                        for (const word of words) {
+                            if (word.length < 2) continue;
+                            const hasCyr = /[\u0400-\u04FF]/.test(word);
+                            const hasLat = /[a-zA-Z\u00C0-\u024F]/.test(word);
+                            if (hasCyr && hasLat) {
+                                findings.push(makeFinding({
+                                    element: el, category: 'Mešanje pisama',
+                                    priority: 'OBAVEZNO', confidence: 0.96,
+                                    original: word,
+                                    replacement: '[prebaciti celu reč na jedno pismo]',
+                                    rationale: `Pomešana slova u ćeliji tabele: \u201e${word}\u201c.`,
+                                    ...cellMeta,
+                                }));
+                            }
+                        }
+                    }
+
+                    if (doBrackets) {
+                        for (const [open, close] of [['(',')'],['[',']']]) {
+                            let depth = 0;
+                            for (let i = 0; i < text.length; i++) {
+                                if (text[i] === open) depth++;
+                                else if (text[i] === close) depth--;
+                            }
+                            if (depth !== 0) {
+                                findings.push(makeFinding({
+                                    element: el, category: 'Zagrade',
+                                    priority: 'OBAVEZNO', confidence: 0.95,
+                                    original: text.substring(0, 50),
+                                    replacement: `[neuparene zagrade ${open}${close} u ćeliji]`,
+                                    rationale: `Neuparene zagrade u ćeliji tabele (${cell.cellId}).`,
+                                    ...cellMeta,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 
@@ -86,6 +174,7 @@ const RuleEngine = (() => {
 
         for (const el of docMap.elements) {
             if (!el.text || el.text.trim().length === 0) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
             scannedCount++;
 
             for (const [open, close] of pairs) {
@@ -152,39 +241,22 @@ const RuleEngine = (() => {
 
     // ==========================================
     // CHECK: Quotes (straight vs typographic)
-    // Consolidates global findings, no individual duplicates
+    // Consolidates once for ENTIRE DOCUMENT, not per paragraph
     // ==========================================
     function checkQuotes(docMap) {
         const findings = [];
         let scannedCount = 0;
         let skippedCount = 0;
+        let totalStraightQuotes = 0;
 
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             scannedCount++;
 
-            // Count straight double quotes in this element
             const straightMatches = el.text.match(/"/g) || [];
-            const straightCount = straightMatches.length;
+            totalStraightQuotes += straightMatches.length;
 
-            if (straightCount > 0) {
-                // Report once per element with total count
-                const ctx = getContext(el.text, el.text.indexOf('"'), 30);
-                findings.push(makeFinding({
-                    element: el,
-                    category: 'Tipografija',
-                    priority: 'OBAVEZNO',
-                    confidence: 0.95,
-                    original: straightCount === 1 ? ctx :
-                        `[${straightCount} ravnih navodnika u ovom pasusu]`,
-                    replacement: '[zameniti ravne navodnike tipografskim: \u201e...\u201c]',
-                    rationale: `Pronađeno ${straightCount} ravnih navodnika. Srpski standard: \u201e...\u201c (spoljni) ili \u2018...\u2019 (unutrašnji).`,
-                    autoFixable: true,
-                    globalPattern: straightCount > 2,
-                }));
-            }
-
-            // Check for unmatched typographic quotes
+            // Unmatched typographic quotes (per-element, this is structural)
             const openDouble = (el.text.match(/\u201E/g) || []).length;
             const closeDouble = (el.text.match(/\u201C/g) || []).length;
             if (openDouble !== closeDouble) {
@@ -199,6 +271,32 @@ const RuleEngine = (() => {
                 }));
             }
         }
+
+        // Report straight quotes once for entire document
+        // Use a synthetic element (not tied to any specific paragraph)
+        // to avoid accidental direct-quote priority demotion
+        if (totalStraightQuotes > 0) {
+            const syntheticElement = {
+                id: 'doc-global',
+                type: 'document',
+                text: '',
+                section: '(ceo dokument)',
+                isDirectQuote: false,
+                quoteConfidence: 0,
+            };
+            findings.push(makeFinding({
+                element: syntheticElement,
+                category: 'Tipografija',
+                priority: 'OBAVEZNO',
+                confidence: 0.95,
+                original: `[${totalStraightQuotes} ravnih navodnika u dokumentu]`,
+                replacement: '[zameniti sve ravne navodnike tipografskim: \u201e...\u201c]',
+                rationale: `Pronađeno ukupno ${totalStraightQuotes} ravnih navodnika u celom dokumentu. Srpski standard: \u201e...\u201c (spoljni) ili \u2018...\u2019 (unutrašnji).`,
+                autoFixable: true,
+                globalPattern: true,
+            }));
+        }
+
         return { findings, scannedCount, skippedCount };
     }
 
@@ -260,6 +358,7 @@ const RuleEngine = (() => {
 
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
             scannedCount++;
             const text = el.text;
             let m;
@@ -348,6 +447,7 @@ const RuleEngine = (() => {
 
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
             scannedCount++;
             const words = el.text.match(/[\p{L}\p{M}]+/gu) || [];
 
@@ -511,8 +611,10 @@ const RuleEngine = (() => {
         let skippedCount = 0;
 
         // Strategy 1: Use OOXML numbering data if available
+        // Only include numeric formats (exclude bullet/none)
         const ooxmlNumbered = docMap.elements.filter(el =>
-            el.numId && el.displayedNumber !== null && el.displayedNumber !== undefined);
+            el.numId && el.displayedNumber !== null && el.displayedNumber !== undefined &&
+            el.numFmt && el.numFmt !== 'bullet' && el.numFmt !== 'none');
 
         if (ooxmlNumbered.length > 1) {
             scannedCount = ooxmlNumbered.length;
@@ -531,13 +633,18 @@ const RuleEngine = (() => {
                     const expected = prev.displayedNumber + 1;
 
                     if (curr.displayedNumber !== expected) {
+                        const prevLabel = prev.displayedLabel || String(prev.displayedNumber);
+                        const currLabel = curr.displayedLabel || String(curr.displayedNumber);
+                        const expectedLabel = curr.displayedLabel
+                            ? curr.displayedLabel.replace(String(curr.displayedNumber), String(expected))
+                            : String(expected);
                         findings.push(makeFinding({
                             element: curr,
                             category: 'Numeracija',
                             priority: 'OBAVEZNO',
                             confidence: 0.92,
-                            original: `Stavka ${curr.displayedNumber} (prethodno: ${prev.displayedNumber})`,
-                            replacement: `Očekivano: ${expected}`,
+                            original: `Stavka ${currLabel} (prethodno: ${prevLabel})`,
+                            replacement: `Očekivano: ${expectedLabel}`,
                             rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.`,
                         }));
                     }
@@ -903,10 +1010,12 @@ const RuleEngine = (() => {
 
     // ==========================================
     // HELPER: Create a finding object
+    // Supports optional table cell metadata (tableId, rowId, cellId, rowIndex, columnIndex)
     // ==========================================
     function makeFinding({ element, category, priority, confidence, original,
         replacement, rationale, autoFixable = false, globalPattern = false,
-        requiresSourceVerification = false }) {
+        requiresSourceVerification = false,
+        tableId = null, rowId = null, cellId = null, rowIndex = null, columnIndex = null }) {
         return {
             id: nextId(),
             section: getSectionName(element),
@@ -922,6 +1031,12 @@ const RuleEngine = (() => {
             autoFixable,
             globalPattern,
             status: 'OPEN',
+            // Table cell metadata (null for non-table findings)
+            tableId,
+            rowId,
+            cellId,
+            rowIndex,
+            columnIndex,
             _element: element, // Internal ref, removed in runAudit before output
         };
     }
