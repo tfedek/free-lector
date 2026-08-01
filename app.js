@@ -57,11 +57,18 @@
         radio.addEventListener('change', () => syncCheckboxesToMode(radio.value));
     });
 
+    // Default checked state from HTML (stored on load)
+    const defaultCheckedState = {};
+    document.querySelectorAll('[data-check]').forEach(cb => {
+        defaultCheckedState[cb.dataset.check] = cb.checked;
+    });
+
     function syncCheckboxesToMode(mode) {
         const allowed = MODE_CHECKS[mode];
         document.querySelectorAll('[data-check]').forEach(cb => {
             if (allowed === null) {
-                // FULL_AUDIT: enable all but don't force-check (respect HTML defaults)
+                // FULL_AUDIT: restore HTML defaults and enable all
+                cb.checked = defaultCheckedState[cb.dataset.check] ?? true;
                 cb.disabled = false;
             } else {
                 const isAllowed = allowed.has(cb.dataset.check);
@@ -312,7 +319,7 @@
         s.total_finding_categories = new Set(open.map(f => f.category)).size;
 
         const scope = currentAuditJson.scope;
-        const reqCaps = ['grammar', 'visual_layout', 'style'];
+        const reqCaps = currentAuditJson.required_capabilities || ['grammar', 'visual_layout', 'style'];
         const reqComplete = reqCaps.every(cap => scope[cap] === true);
         s.can_be_marked_final = reqComplete && s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
 

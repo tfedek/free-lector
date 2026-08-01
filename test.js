@@ -83,15 +83,11 @@ test('unmatched typographic quotes detected globally', () => {
     const {findings} = RuleEngine.runAudit(doc, allOpts());
     assert(findings.some(f=>f.rationale.includes('Neupareni')));
 });
-test('en-dash for range 484-425', () => {
-    const doc = makeDocMap([{text:'Period 484-425.'}]);
+test('dashes check disabled (no-op)', () => {
+    const doc = makeDocMap([{text:'Period 484-425. Also -- here.'}]);
     const {findings} = RuleEngine.runAudit(doc, allOpts());
-    assert(findings.some(f=>f.replacement&&f.replacement.includes('\u2013')));
-});
-test('em-dash for --', () => {
-    const doc = makeDocMap([{text:'On -- kaže.'}]);
-    const {findings} = RuleEngine.runAudit(doc, allOpts());
-    assert(findings.some(f=>f.rationale.includes('em-dash')));
+    const dashFindings = findings.filter(f=>f.rationale&&(f.rationale.includes('en-dash')||f.rationale.includes('em-dash')));
+    assert.strictEqual(dashFindings.length, 0, 'Dashes check should be disabled');
 });
 test('script mixing detected', () => {
     const doc = makeDocMap([{text:'\u041Cadmo'}]);
@@ -120,7 +116,7 @@ test('empty footnote', () => {
     assert(findings.some(f=>f.category==='Fusnote'));
 });
 test('bibliography without year', () => {
-    const doc = makeDocMap([{type:'heading',text:'Bibliografija',headingLevel:1},{text:'Apijan, Rimska istorija, Beograd'}]);
+    const doc = makeDocMap([{type:'heading',text:'Bibliografija',headingLevel:1},{text:'Petrović, Milan. Lingvistička analiza srpskog. Beograd'}]);
     const {findings} = RuleEngine.runAudit(doc, allOpts());
     assert(findings.some(f=>f.category==='Bibliografija'));
 });
@@ -258,13 +254,13 @@ test('bibliography continues through subheadings', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Bibliografija', headingLevel:1},
         {type:'heading', text:'Primarni izvori', headingLevel:2},
-        {text:'Apijan, Rimska istorija, Beograd'},
+        {text:'Petrović, Milan. Lingvistička analiza srpskog. Beograd'},
         {type:'heading', text:'Sekundarni izvori', headingLevel:2},
         {text:'Smith J., Mythology, Oxford University Press, 2015'},
     ]);
     const {findings} = RuleEngine.runAudit(doc, allOpts());
-    // Apijan entry should be found (no year)
-    assert(findings.some(f=>f.category==='Bibliografija'&&f.original.includes('Apijan')));
+    // Petrović entry should be found (no year, modern source)
+    assert(findings.some(f=>f.category==='Bibliografija'&&f.original.includes('Petrović')));
 });
 
 // ==========================================
@@ -294,16 +290,12 @@ test('H2 followed by H2 reports warning', () => {
 // ISO date exclusion
 // ==========================================
 console.log('\nISO datum:');
-test('ISO date 2026-08-01 not flagged as range', () => {
-    const doc = makeDocMap([{text:'Datum je 2026-08-01 za sledeći sastanak.'}]);
+test('ISO date 2026-08-01 not flagged (dashes disabled)', () => {
+    // Dashes check is removed — this is a no-op confirmation
+    const doc = makeDocMap([{text:'Datum 2026-08-01 i raspon 484-425.'}]);
     const {findings} = RuleEngine.runAudit(doc, {dashes:true});
-    const dash = findings.filter(f=>f.replacement&&f.replacement.includes('\u2013'));
-    assert.strictEqual(dash.length, 0, 'ISO date should not be flagged');
-});
-test('range in parentheses (484-425) IS detected', () => {
-    const doc = makeDocMap([{text:'Kao što vidimo (484-425 p.n.e.) to je period.'}]);
-    const {findings} = RuleEngine.runAudit(doc, {dashes:true});
-    assert(findings.some(f=>f.replacement&&f.replacement.includes('484\u2013425')));
+    const dash = findings.filter(f=>f.category==='Tipografija'&&f.rationale&&f.rationale.includes('en-dash'));
+    assert.strictEqual(dash.length, 0);
 });
 
 // ==========================================
@@ -452,6 +444,30 @@ test('final gate requires grammar+visual+style', () => {
     assert.strictEqual(j2.summary.can_be_marked_final, true);
 });
 
+
+// ==========================================
+// Additional tests: ancient source skipped, antičke excluded
+// ==========================================
+console.log('\nAntički izvori:');
+test('ancient sources not flagged for missing year', () => {
+    const doc = makeDocMap([
+        {type:'heading', text:'Bibliografija', headingLevel:1},
+        {text:'Diodorus Siculus. Bibliotheca Historica. Knjige 1.28.'},
+        {text:'Josephus Flavius. Antiquitates Judaicae. Knjiga 12.'},
+    ]);
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const bibFindings = findings.filter(f=>f.category==='Bibliografija');
+    assert.strictEqual(bibFindings.length, 0, 'Ancient sources should be skipped');
+});
+test('electronic sources with URL not flagged for missing year', () => {
+    const doc = makeDocMap([
+        {type:'heading', text:'Bibliografija', headingLevel:1},
+        {text:'Perseus Digital Library: https://scaife.perseus.org/'},
+    ]);
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const bibFindings = findings.filter(f=>f.category==='Bibliografija');
+    assert.strictEqual(bibFindings.length, 0, 'Electronic sources should be skipped');
+});
 
 // ==========================================
 // SUMMARY — run async tests then report

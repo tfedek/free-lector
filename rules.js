@@ -28,7 +28,7 @@ const RuleEngine = (() => {
             { key: 'duplicates', name: 'Duple reči', fn: checkDuplicateWords },
             { key: 'toc', name: 'TOC vs naslovi', fn: checkTocVsHeadings },
             { key: 'numbering', name: 'Numeracija lista', fn: checkNumbering },
-            { key: 'dashes', name: 'Crtice i rasponi', fn: checkDashes },
+            { key: 'dashes', name: 'Crtice i rasponi', fn: () => ({ findings: [], scannedCount: 0, skippedCount: 0 }) },
             { key: 'bibliography', name: 'Bibliografija', fn: checkBibliography },
             { key: 'urls', name: 'URL-ovi', fn: checkUrls },
             { key: 'footnotes', name: 'Fusnote', fn: checkFootnotes },
@@ -490,11 +490,21 @@ const RuleEngine = (() => {
 
         for (const entry of bibEntries) {
             const text = entry.text.trim();
-            if (!text.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/)) {
-                findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
-            }
-            if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i)) {
-                findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true }));
+
+            // Skip ancient/classical sources (no modern publication year expected)
+            const isAncient = text.match(/\b(Herodot|Thucydides|Plutarch|Diodorus|Strabo|Pausanias|Appian|Apijan|Josephus|Flavius|Pseudo-|Homer|Hesiod|Plato|Aristotle|Aristot|Cicero|Tacitus|Livius|Plinius|Ptolemy|Euripides|Sophocles|Aeschylus|Xenophon|Polybius|Apollodorus|Bibliotheca)\b/i);
+            // Skip electronic/web sources (URLs present)
+            const isElectronic = text.match(/https?:\/\//);
+            // Skip religious texts
+            const isReligious = text.match(/\b(Biblija|Bible|Sveto Pismo|Quran|Talmud|Torah)\b/i);
+
+            if (!isAncient && !isElectronic && !isReligious) {
+                if (!text.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/)) {
+                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
+                }
+                if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i)) {
+                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true }));
+                }
             }
         }
 

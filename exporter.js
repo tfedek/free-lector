@@ -1,6 +1,6 @@
 /**
  * Exporter Module — Round 4
- * Dynamic scope, configurable requiredCapabilities, SHA-256 doc ID,
+ * Dynamic scope, configurable requiredCapabilities, FNV-based content ID,
  * structuredClone fallback, table cell columns in Excel/Markdown
  */
 
@@ -65,7 +65,7 @@ const Exporter = (() => {
             finalAssessment = `Dokument ima ${mandatory} obaveznih ispravki i ${blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
         }
 
-        // SHA-256 based document_id (content only, no filename)
+        // FNV-based content ID (content only, no filename)
         const documentId = generateDocId(docMap.rawText || '');
         // Content + time version_id
         const versionId = generateVersionId(docMap.rawText || '');

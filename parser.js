@@ -294,9 +294,12 @@ const DocumentParser = (() => {
                         const lDef = abstractDef.levels[l];
                         if (!lDef) continue;
                         // lvlRestart specifies which level's advancement triggers reset
-                        // Default behavior: reset when any higher level advances
-                        const restartAt = lDef.lvlRestart ?? (l > 0 ? l - 1 : null);
-                        if (restartAt != null && prevEl.numLevel <= restartAt) {
+                        // lvlRestart=0 means "never restart" (OOXML spec)
+                        // Default (null): reset when immediate parent level advances
+                        const restartAt = lDef.lvlRestart;
+                        if (restartAt === 0) continue; // Never restart
+                        const effectiveRestart = restartAt ?? (l > 0 ? l - 1 : null);
+                        if (effectiveRestart != null && prevEl.numLevel <= effectiveRestart) {
                             inst.counters[l] = (lDef.start ?? 1) - 1;
                         }
                     }
@@ -313,7 +316,7 @@ const DocumentParser = (() => {
                 listInstanceId = `${numId}-${inst.seq}-${level}`;
 
                 // Format label using all level counters
-                displayedLabel = formatLabel(lvlDef.lvlText || `%${level+1}.`, inst.counters, abstractDef.levels);
+                displayedLabel = formatLabel(lvlDef.lvlText || `%${level+1}.`, inst.counters, abstractDef.levels, numDef.lvlOverrides);
             }
         }
 
@@ -466,16 +469,16 @@ const DocumentParser = (() => {
 
         // Generate hashed IDs from full normalized content
         const tableContent = allCellTexts.join('|');
-        const tableId = hashId('table', `table|${tableIdx}|${tableContent}`);
+        const tableId = hashId('table', `table|${tableContent}`);
 
         for (let ri = 0; ri < rows.length; ri++) {
             const rowContent = rows[ri].map(c => c.text).join('|');
-            const rowId = hashId('table', `${tableId}|row|${ri}|${rowContent}`);
+            const rowId = hashId('table', `${tableId}|row|${rowContent}`);
             for (let ci = 0; ci < rows[ri].length; ci++) {
                 const cell = rows[ri][ci];
                 cell.tableId = tableId;
                 cell.rowId = rowId;
-                cell.cellId = hashId('table', `${rowId}|cell|${ci}|${cell.text}`);
+                cell.cellId = hashId('table', `${rowId}|cell|${cell.text}|${cell.columnIndex}`);
             }
         }
 
@@ -562,13 +565,17 @@ const DocumentParser = (() => {
     // MULTILEVEL LABEL FORMATTING
     // formatLabel replaces ALL %1–%9 placeholders using counters and level defs
     // ==========================================
-    function formatLabel(lvlText, counters, levelDefinitions) {
+    function formatLabel(lvlText, counters, levelDefinitions, lvlOverrides) {
         let label = lvlText || '';
         for (let lvl = 0; lvl <= 8; lvl++) {
             const placeholder = `%${lvl + 1}`;
             if (!label.includes(placeholder)) continue;
             const counter = counters[lvl] || 0;
-            const lvlDef = levelDefinitions ? levelDefinitions[lvl] : null;
+            // Use lvlOverride definition if available, then base level definition
+            let lvlDef = levelDefinitions ? levelDefinitions[lvl] : null;
+            if (lvlOverrides && lvlOverrides[lvl] && lvlOverrides[lvl].lvlDef) {
+                lvlDef = { ...lvlDef, ...lvlOverrides[lvl].lvlDef };
+            }
             const fmt = lvlDef ? (lvlDef.numFmt || 'decimal') : 'decimal';
             const formatted = formatSingleNumber(counter, fmt);
             label = label.split(placeholder).join(formatted);
