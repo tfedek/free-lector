@@ -10,6 +10,7 @@
     let currentFile = null;
     let currentDocMap = null;
     let currentAuditJson = null;
+    let auditInProgress = false;
 
     // DOM refs
     const dropZone = document.getElementById('drop-zone');
@@ -29,7 +30,7 @@
 
     const resultsSection = document.getElementById('results-section');
     const statsDiv = document.getElementById('stats');
-    const finalAssessment = document.getElementById('final-assessment');
+    const finalAssessmentEl = document.getElementById('final-assessment');
     const resultsBody = document.getElementById('results-body');
     const noResults = document.getElementById('no-results');
     const passedList = document.getElementById('passed-list');
@@ -43,69 +44,48 @@
     const downloadMd = document.getElementById('download-md');
     const downloadJsonBtn = document.getElementById('download-json');
     const resetBtn = document.getElementById('reset-btn');
-
+    const exportFilter = document.getElementById('export-filter');
 
 
     // ==========================================
     // FILE UPLOAD HANDLING
     // ==========================================
-
-    // Drag and drop
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('dragover');
     });
-
     dropZone.addEventListener('dragleave', () => {
         dropZone.classList.remove('dragover');
     });
-
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) {
-            handleFile(e.dataTransfer.files[0]);
-        }
+        if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
     });
-
-    // Click to upload
     fileBtn.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('click', (e) => {
         if (e.target !== fileBtn) fileInput.click();
     });
-
     fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) {
-            handleFile(fileInput.files[0]);
-        }
+        if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
     });
-
-    // Remove file
-    removeFileBtn.addEventListener('click', () => {
-        resetState();
-    });
+    removeFileBtn.addEventListener('click', () => resetState());
 
     function handleFile(file) {
-        // Validate extension
         const ext = file.name.split('.').pop().toLowerCase();
         const allowed = ['docx', 'md', 'txt', 'text'];
         if (!allowed.includes(ext)) {
             alert(`Nepodržan format: .${ext}\nPodržani formati: .docx, .md, .txt`);
             return;
         }
-
-        // Validate size (max 20MB)
         if (file.size > 20 * 1024 * 1024) {
             alert('Fajl je prevelik (maksimum 20MB).');
             return;
         }
-
-        // Block .docm disguised as .docx
         if (ext === 'docm') {
-            alert('Makro-omogućeni dokumenti (.docm) nisu podržani iz bezbednosnih razloga.');
+            alert('Makro-omogućeni dokumenti (.docm) nisu podržani.');
             return;
         }
-
         currentFile = file;
         fileName.textContent = file.name;
         fileSize.textContent = formatFileSize(file.size);
@@ -115,15 +95,15 @@
     }
 
 
-
     // ==========================================
-    // RUN AUDIT
+    // RUN AUDIT (blocks concurrent runs)
     // ==========================================
-
     runBtn.addEventListener('click', async () => {
-        if (!currentFile) return;
+        if (!currentFile || auditInProgress) return;
+        auditInProgress = true;
+        runBtn.disabled = true;
+        runBtn.textContent = 'Audit u toku...';
 
-        // Gather options
         const options = {};
         document.querySelectorAll('[data-check]').forEach(cb => {
             options[cb.dataset.check] = cb.checked;
@@ -131,37 +111,29 @@
         options.auditMode = document.querySelector('input[name="audit-mode"]:checked').value;
         options.houseStyle = document.getElementById('house-style').value;
 
-        // Show progress
         document.getElementById('upload-section').classList.add('hidden');
         progressSection.classList.remove('hidden');
         resultsSection.classList.add('hidden');
 
         try {
-            // Phase 1: Parse
             updateProgress(10, 'Parsiranje dokumenta', 'Čitanje strukture fajla...');
             currentDocMap = await DocumentParser.parse(currentFile);
 
-            // Phase 2: Assign sections to elements
             updateProgress(30, 'Analiza strukture', `${currentDocMap.elements.length} elemenata pronađeno`);
             assignSections(currentDocMap);
 
-            // Phase 3: Run deterministic checks
             updateProgress(50, 'Determinističke provere', 'Pokretanje pravila...');
-            await sleep(50); // Allow UI to update
+            await sleep(50);
             const { findings, passedChecks } = RuleEngine.runAudit(currentDocMap, options);
 
-            // Phase 4: Verify findings (dedup, validate)
-            updateProgress(75, 'Verifikacija nalaza', `${findings.length} kandidata pronađeno`);
-            const verifiedFindings = verifyFindings(findings, currentDocMap);
+            updateProgress(75, 'Filtriranje nalaza', `${findings.length} kandidata pronađeno`);
+            const verified = filterAndDeduplicateFindings(findings, currentDocMap);
 
-            // Phase 5: Build audit JSON
             updateProgress(90, 'Generisanje izveštaja', 'Priprema izvoza...');
-            currentAuditJson = Exporter.buildAuditJson(currentDocMap, verifiedFindings, passedChecks, options);
+            currentAuditJson = Exporter.buildAuditJson(currentDocMap, verified, passedChecks, options);
 
-            // Phase 6: Display results
-            updateProgress(100, 'Gotovo', `${verifiedFindings.length} nalaza`);
+            updateProgress(100, 'Gotovo', `${verified.length} nalaza`);
             await sleep(300);
-
             displayResults(currentAuditJson);
 
         } catch (err) {
@@ -170,13 +142,13 @@
             progressText.textContent = err.message;
             progressFill.style.width = '0%';
             progressFill.style.background = 'var(--danger)';
-
-            // Show reset option
             setTimeout(() => {
-                if (confirm(`Greška pri obradi: ${err.message}\n\nPokušati ponovo?`)) {
-                    resetState();
-                }
+                if (confirm(`Greška: ${err.message}\n\nPokušati ponovo?`)) resetState();
             }, 500);
+        } finally {
+            auditInProgress = false;
+            runBtn.disabled = false;
+            runBtn.textContent = 'Pokreni audit';
         }
     });
 
@@ -186,18 +158,14 @@
         progressText.textContent = detail;
     }
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
+    function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 
     // ==========================================
-    // ASSIGN SECTIONS (nearest heading) TO ELEMENTS
+    // ASSIGN SECTIONS
     // ==========================================
     function assignSections(docMap) {
         let currentSection = '(početak dokumenta)';
-
         for (const el of docMap.elements) {
             if (el.type === 'heading' && el.text.trim()) {
                 currentSection = el.text.trim();
@@ -207,9 +175,10 @@
     }
 
     // ==========================================
-    // VERIFY FINDINGS (dedup, sanity check)
+    // FILTER AND DEDUPLICATE FINDINGS
+    // Validates original exists in element text
     // ==========================================
-    function verifyFindings(findings, docMap) {
+    function filterAndDeduplicateFindings(findings, docMap) {
         const verified = [];
         const seen = new Set();
 
@@ -217,20 +186,35 @@
             // Skip if original and replacement are identical
             if (f.original === f.replacement) continue;
 
-            // Skip duplicates (same original + same category in same element)
+            // Skip duplicates (same original + category + element)
             const key = `${f.paragraphId}::${f.category}::${f.original}`;
             if (seen.has(key)) continue;
             seen.add(key);
 
-            // Skip if confidence is too low
+            // Skip low confidence
             if (f.confidence < 0.60) continue;
+
+            // Validate: original should exist in element text
+            // (skip validation for synthetic/consolidated findings)
+            if (f.original && !f.globalPattern && f.paragraphId) {
+                const el = docMap.elements.find(e => e.id === f.paragraphId);
+                if (el && el.text && !f.original.startsWith('[') &&
+                    !f.original.startsWith('TOC:') &&
+                    !f.original.startsWith('Stavka') &&
+                    !f.original.startsWith('Lista') &&
+                    !f.original.startsWith('Izvor')) {
+                    // Check if original text actually appears in element
+                    const cleanOriginal = f.original.replace(/^\.\.\./, '').replace(/\.\.\.$/, '');
+                    if (cleanOriginal.length > 3 && !el.text.includes(cleanOriginal)) {
+                        continue; // Original not found in element — skip
+                    }
+                }
+            }
 
             verified.push(f);
         }
-
         return verified;
     }
-
 
 
     // ==========================================
@@ -239,27 +223,21 @@
     function displayResults(auditJson) {
         progressSection.classList.add('hidden');
         resultsSection.classList.remove('hidden');
+        updateStatsDisplay(auditJson);
+        populateFilters(auditJson.findings);
+        renderTable(auditJson.findings);
+        renderPassedChecks(auditJson.passed_checks);
+    }
 
+    function updateStatsDisplay(auditJson) {
         const s = auditJson.summary;
-
-        // Stats badges
         statsDiv.innerHTML = '';
         if (s.blockers > 0) addBadge('Blocker: ' + s.blockers, 'stat-blocker');
         if (s.mandatory > 0) addBadge('Obavezno: ' + s.mandatory, 'stat-mandatory');
         if (s.verify > 0) addBadge('Proveriti: ' + s.verify, 'stat-verify');
         if (s.recommendations > 0) addBadge('Preporuke: ' + s.recommendations, 'stat-recommendation');
         if (s.passed_checks > 0) addBadge('Prošlo: ' + s.passed_checks, 'stat-passed');
-
-        finalAssessment.textContent = s.final_assessment;
-
-        // Populate filter dropdowns
-        populateFilters(auditJson.findings);
-
-        // Render table
-        renderTable(auditJson.findings);
-
-        // Render passed checks
-        renderPassedChecks(auditJson.passed_checks);
+        finalAssessmentEl.textContent = s.final_assessment;
     }
 
     function addBadge(text, cls) {
@@ -270,17 +248,13 @@
     }
 
     function populateFilters(findings) {
-        // Categories
         const categories = [...new Set(findings.map(f => f.category))].sort();
         filterCategory.innerHTML = '<option value="all">Sve</option>';
         categories.forEach(c => {
             const opt = document.createElement('option');
-            opt.value = c;
-            opt.textContent = c;
+            opt.value = c; opt.textContent = c;
             filterCategory.appendChild(opt);
         });
-
-        // Sections
         const sections = [...new Set(findings.map(f => f.section))].sort();
         filterSection.innerHTML = '<option value="all">Svi</option>';
         sections.forEach(s => {
@@ -290,6 +264,7 @@
             filterSection.appendChild(opt);
         });
     }
+
 
     function renderTable(findings) {
         const priority = filterPriority.value;
@@ -304,15 +279,14 @@
         if (autoOnly) filtered = filtered.filter(f => f.autoFixable);
 
         resultsBody.innerHTML = '';
-
-        if (filtered.length === 0) {
-            noResults.classList.remove('hidden');
-            return;
-        }
+        if (filtered.length === 0) { noResults.classList.remove('hidden'); return; }
         noResults.classList.add('hidden');
 
         filtered.forEach((f, i) => {
             const tr = document.createElement('tr');
+            if (f.status === 'DONE') tr.style.opacity = '0.4';
+            if (f.status === 'REJECTED') tr.style.opacity = '0.3';
+
             tr.innerHTML = `
                 <td>${i + 1}</td>
                 <td title="${escHtml(f.section)}">${escHtml(truncate(f.section, 30))}</td>
@@ -323,27 +297,53 @@
                 <td><span class="cell-reason">${escHtml(f.rationale)}</span></td>
                 <td>${renderConfidence(f.confidence)}</td>
                 <td class="action-btns">
-                    <button class="btn btn-sm btn-accept" data-id="${f.id}" title="Prihvati">&#10003;</button>
-                    <button class="btn btn-sm btn-reject" data-id="${f.id}" title="Odbij">&#10007;</button>
+                    <button class="btn btn-sm btn-accept" data-id="${f.id}" title="Označi kao rešeno">&#10003;</button>
+                    <button class="btn btn-sm btn-reject" data-id="${f.id}" title="Označi kao nije greška">&#10007;</button>
                 </td>
             `;
             resultsBody.appendChild(tr);
         });
 
-        // Action button handlers
+        // Action handlers with stats recalculation
         resultsBody.querySelectorAll('.btn-accept').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const finding = currentAuditJson.findings.find(f => f.id === btn.dataset.id);
-                if (finding) { finding.status = 'DONE'; btn.closest('tr').style.opacity = '0.4'; }
-            });
+            btn.addEventListener('click', () => markFinding(btn.dataset.id, 'DONE'));
         });
         resultsBody.querySelectorAll('.btn-reject').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const finding = currentAuditJson.findings.find(f => f.id === btn.dataset.id);
-                if (finding) { finding.status = 'REJECTED'; btn.closest('tr').style.opacity = '0.3'; }
-            });
+            btn.addEventListener('click', () => markFinding(btn.dataset.id, 'REJECTED'));
         });
     }
+
+    /**
+     * Mark a finding and recalculate summary stats
+     */
+    function markFinding(findingId, newStatus) {
+        const finding = currentAuditJson.findings.find(f => f.id === findingId);
+        if (!finding) return;
+        finding.status = newStatus;
+        recalculateSummary();
+        renderTable(currentAuditJson.findings);
+    }
+
+    /**
+     * Recalculate summary after status changes
+     */
+    function recalculateSummary() {
+        const open = currentAuditJson.findings.filter(f => f.status === 'OPEN');
+        const s = currentAuditJson.summary;
+        s.mandatory = open.filter(f => f.priority === 'OBAVEZNO').length;
+        s.verify = open.filter(f => f.priority === 'PROVERITI').length;
+        s.recommendations = open.filter(f => f.priority === 'PREPORUKA').length;
+        s.blockers = open.filter(f => f.priority === 'BLOCKER').length;
+        s.can_be_marked_final = s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
+
+        if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) {
+            s.final_assessment = 'Determinističke provere su završene. Gramatika, stil i vizuelni prelom nisu provereni.';
+        } else {
+            s.final_assessment = `Dokument ima ${s.mandatory} obaveznih ispravki i ${s.blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
+        }
+        updateStatsDisplay(currentAuditJson);
+    }
+
 
     function renderConfidence(conf) {
         const pct = Math.round(conf * 100);
@@ -356,12 +356,10 @@
         checks.forEach(c => {
             const div = document.createElement('div');
             div.className = 'passed-item';
-            div.textContent = c.area;
+            div.textContent = `${c.area} (${c.count})`;
             passedList.appendChild(div);
         });
     }
-
-
 
     // ==========================================
     // FILTER HANDLERS
@@ -372,18 +370,25 @@
     filterAutofix.addEventListener('change', () => renderTable(currentAuditJson.findings));
 
     // ==========================================
-    // EXPORT HANDLERS
+    // EXPORT HANDLERS (with export filter)
     // ==========================================
     downloadXlsx.addEventListener('click', () => {
-        if (currentAuditJson) Exporter.downloadExcel(currentAuditJson);
+        if (currentAuditJson) {
+            const filter = exportFilter ? exportFilter.value : 'all';
+            Exporter.downloadExcel(currentAuditJson, filter);
+        }
     });
-
     downloadMd.addEventListener('click', () => {
-        if (currentAuditJson) Exporter.downloadMarkdown(currentAuditJson);
+        if (currentAuditJson) {
+            const filter = exportFilter ? exportFilter.value : 'all';
+            Exporter.downloadMarkdown(currentAuditJson, filter);
+        }
     });
-
     downloadJsonBtn.addEventListener('click', () => {
-        if (currentAuditJson) Exporter.downloadJson(currentAuditJson);
+        if (currentAuditJson) {
+            const filter = exportFilter ? exportFilter.value : 'all';
+            Exporter.downloadJson(currentAuditJson, filter);
+        }
     });
 
     // ==========================================
@@ -395,6 +400,9 @@
         currentFile = null;
         currentDocMap = null;
         currentAuditJson = null;
+        auditInProgress = false;
+        runBtn.disabled = false;
+        runBtn.textContent = 'Pokreni audit';
 
         fileInput.value = '';
         fileInfo.classList.add('hidden');
@@ -403,7 +411,6 @@
         progressSection.classList.add('hidden');
         resultsSection.classList.add('hidden');
         document.getElementById('upload-section').classList.remove('hidden');
-
         progressFill.style.width = '0%';
         progressFill.style.background = '';
     }
@@ -416,12 +423,10 @@
         div.textContent = str;
         return div.innerHTML;
     }
-
     function truncate(str, maxLen) {
         if (!str) return '';
         return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
     }
-
     function formatFileSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';

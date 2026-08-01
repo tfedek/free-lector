@@ -222,3 +222,24 @@ body {
     .results-header { flex-direction: column; align-items: flex-start; }
     #results-table { font-size: 0.7rem; }
 }
+
+
+/* === Mode warning === */
+.mode-warning {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--warning-light);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: #92400e;
+}
+
+/* === Export filter select === */
+.export-filter-select {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    background: white;
+}

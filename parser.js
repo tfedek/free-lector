@@ -1,11 +1,16 @@
 /**
  * Document Parser Module
  * Handles .docx (OOXML via JSZip), .md, and .txt files
- * Extracts structured document map with stable IDs
+ * Extracts structured document map with hashed IDs
  */
 
 const DocumentParser = (() => {
     'use strict';
+
+    // Safety limits
+    const MAX_ZIP_FILES = 500;
+    const MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024; // 100MB
+    const MAX_SINGLE_XML_SIZE = 50 * 1024 * 1024; // 50MB
 
     /**
      * Main parse entry point
@@ -32,16 +37,18 @@ const DocumentParser = (() => {
                 throw new Error(`Nepodržan format: .${ext}`);
         }
 
-        // Assign stable IDs
-        assignStableIds(docMap);
+        // Assign stable hashed IDs
+        assignHashedIds(docMap);
+        // Detect direct quotes
+        detectDirectQuotes(docMap);
         return docMap;
     }
+
 
     /**
      * Parse DOCX using JSZip + raw OOXML
      */
     async function parseDocx(arrayBuffer, fileName) {
-        // Validate it's a valid ZIP
         let zip;
         try {
             zip = await JSZip.loadAsync(arrayBuffer);
@@ -49,16 +56,33 @@ const DocumentParser = (() => {
             throw new Error('Fajl nije validan DOCX (ZIP/OOXML paket).');
         }
 
+        // Enforce ZIP file count limit
+        const fileCount = Object.keys(zip.files).length;
+        if (fileCount > MAX_ZIP_FILES) {
+            throw new Error(`ZIP sadrži ${fileCount} fajlova (limit: ${MAX_ZIP_FILES}).`);
+        }
+
+        // Check total uncompressed size
+        let totalSize = 0;
+        for (const [, f] of Object.entries(zip.files)) {
+            if (f._data && f._data.uncompressedSize) {
+                totalSize += f._data.uncompressedSize;
+            }
+        }
+        if (totalSize > MAX_UNCOMPRESSED_SIZE) {
+            throw new Error('Ukupna nekompresovana veličina prelazi limit.');
+        }
+
         // Check for required OOXML structure
         const contentTypesFile = zip.file('[Content_Types].xml');
         if (!contentTypesFile) {
-            throw new Error('Fajl nema validnu OOXML strukturu ([Content_Types].xml nedostaje).');
+            throw new Error('Fajl nema validnu OOXML strukturu.');
         }
 
         // Block macro-enabled documents
         const contentTypes = await contentTypesFile.async('text');
         if (contentTypes.includes('vbaProject') || contentTypes.includes('.docm')) {
-            throw new Error('Makro-omogućeni dokumenti (.docm) nisu podržani iz bezbednosnih razloga.');
+            throw new Error('Makro-omogućeni dokumenti nisu podržani.');
         }
 
         // Parse document.xml
@@ -67,6 +91,10 @@ const DocumentParser = (() => {
             throw new Error('word/document.xml nije pronađen u DOCX paketu.');
         }
         const docContent = await docXml.async('text');
+        if (docContent.length > MAX_SINGLE_XML_SIZE) {
+            throw new Error('document.xml prelazi dozvoljenu veličinu.');
+        }
+
 
         // Parse styles
         let styles = {};
@@ -76,7 +104,7 @@ const DocumentParser = (() => {
             styles = parseStyles(stylesContent);
         }
 
-        // Parse numbering
+        // Parse numbering (full implementation)
         let numbering = {};
         const numberingXml = zip.file('word/numbering.xml');
         if (numberingXml) {
@@ -117,6 +145,7 @@ const DocumentParser = (() => {
         // Build document structure from document.xml
         const elements = parseDocumentXml(docContent, styles, numbering);
 
+
         // Also get Mammoth HTML for visual reference
         let htmlPreview = '';
         try {
@@ -145,15 +174,20 @@ const DocumentParser = (() => {
         };
     }
 
+
     /**
      * Parse document.xml into structured elements
      */
     function parseDocumentXml(xmlStr, styles, numbering) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlStr, 'application/xml');
-        const elements = [];
 
-        // Namespace handling
+        // Check for XML parse errors
+        if (doc.getElementsByTagName('parsererror').length) {
+            throw new Error('Neispravan OOXML sadržaj.');
+        }
+
+        const elements = [];
         const ns = {
             w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
             r: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
@@ -164,34 +198,35 @@ const DocumentParser = (() => {
 
         let paragraphIndex = 0;
         let tableIndex = 0;
+        // Track list instances for numbering
+        const listInstances = {};
 
         for (const child of body.children) {
             const localName = child.localName;
 
             if (localName === 'p') {
-                const el = parseParagraph(child, ns, styles, numbering, paragraphIndex);
+                const el = parseParagraph(child, ns, styles, numbering,
+                    paragraphIndex, listInstances);
                 elements.push(el);
                 paragraphIndex++;
             } else if (localName === 'tbl') {
                 const el = parseTable(child, ns, tableIndex);
                 elements.push(el);
                 tableIndex++;
-            } else if (localName === 'sectPr') {
-                // Section break - record but don't add as element
             }
         }
 
         return elements;
     }
 
+
     /**
      * Parse a single paragraph element
      */
-    function parseParagraph(pNode, ns, styles, numbering, index) {
+    function parseParagraph(pNode, ns, styles, numbering, index, listInstances) {
         const runs = [];
         let fullText = '';
 
-        // Get paragraph style
         const pPr = pNode.getElementsByTagNameNS(ns.w, 'pPr')[0];
         let styleName = 'Normal';
         let outlineLevel = -1;
@@ -209,7 +244,6 @@ const DocumentParser = (() => {
                 outlineLevel = parseInt(outlineLvl.getAttribute('w:val'), 10);
             }
 
-            // Check for numbering
             const numPr = pPr.getElementsByTagNameNS(ns.w, 'numPr')[0];
             if (numPr) {
                 const ilvl = numPr.getElementsByTagNameNS(ns.w, 'ilvl')[0];
@@ -219,15 +253,16 @@ const DocumentParser = (() => {
             }
         }
 
-        // Determine if this is a heading
-        const isHeading = styleName.match(/^Heading(\d+)$/) || styleName.match(/^Naslov(\d+)$/) || outlineLevel >= 0;
+        // Determine heading
+        const isHeading = styleName.match(/^Heading(\d+)$/) ||
+            styleName.match(/^Naslov(\d+)$/) || outlineLevel >= 0;
         let headingLevel = 0;
         if (isHeading) {
             const match = styleName.match(/(\d+)$/);
             headingLevel = match ? parseInt(match[1], 10) : (outlineLevel + 1);
         }
 
-        // Extract runs (text segments with formatting)
+        // Extract runs
         for (const child of pNode.children) {
             if (child.localName === 'r') {
                 const runText = extractRunText(child, ns);
@@ -237,7 +272,6 @@ const DocumentParser = (() => {
                     fullText += runText;
                 }
             } else if (child.localName === 'hyperlink') {
-                // Extract text from hyperlink runs
                 for (const hChild of child.children) {
                     if (hChild.localName === 'r') {
                         const runText = extractRunText(hChild, ns);
@@ -247,6 +281,35 @@ const DocumentParser = (() => {
                         }
                     }
                 }
+            }
+        }
+
+
+        // Calculate displayed number from OOXML numbering data
+        let displayedNumber = null;
+        let listInstanceId = null;
+        let listStart = null;
+
+        if (numId && numbering && numbering.nums && numbering.nums[numId]) {
+            const numDef = numbering.nums[numId];
+            const abstractId = numDef.abstractNumId;
+            const abstractDef = numbering.abstractNums
+                ? numbering.abstractNums[abstractId] : null;
+            const level = numLevel || 0;
+
+            if (abstractDef && abstractDef.levels && abstractDef.levels[level]) {
+                const lvlDef = abstractDef.levels[level];
+                listStart = lvlDef.start || 1;
+
+                // Track list instance counters
+                const instanceKey = `${numId}-${level}`;
+                if (!listInstances[instanceKey]) {
+                    listInstances[instanceKey] = listStart;
+                } else {
+                    listInstances[instanceKey]++;
+                }
+                displayedNumber = listInstances[instanceKey];
+                listInstanceId = instanceKey;
             }
         }
 
@@ -261,9 +324,15 @@ const DocumentParser = (() => {
             headingLevel: isHeading ? headingLevel : null,
             numId,
             numLevel,
+            displayedNumber,
+            listInstanceId,
+            listStart,
             isEmpty: fullText.trim().length === 0,
+            isDirectQuote: false,
+            quoteConfidence: 0,
         };
     }
+
 
     function extractRunText(rNode, ns) {
         let text = '';
@@ -275,16 +344,14 @@ const DocumentParser = (() => {
             } else if (child.localName === 'br') {
                 text += '\n';
             } else if (child.localName === 'sym') {
-                text += '\u25A1'; // placeholder for symbol
+                text += '\u25A1';
             }
         }
         return text;
     }
 
     function extractRunProps(rNode, ns) {
-        const rPr = rNode.getElementsByTagNameNS(
-            'http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'rPr'
-        )[0];
+        const rPr = rNode.getElementsByTagNameNS(ns.w, 'rPr')[0];
         if (!rPr) return {};
 
         const props = {};
@@ -296,31 +363,55 @@ const DocumentParser = (() => {
         if (lang) {
             props.lang = lang.getAttribute('w:val') || lang.getAttribute('w:bidi');
         }
-
         return props;
     }
 
+
     /**
-     * Parse table element
+     * Parse table element with full cell metadata
      */
     function parseTable(tblNode, ns, tableIdx) {
         const rows = [];
         const trNodes = tblNode.getElementsByTagNameNS(ns.w, 'tr');
+        const tableId = `tbl-${tableIdx}`;
 
+        let rowIndex = 0;
         for (const tr of trNodes) {
             const cells = [];
             const tcNodes = tr.getElementsByTagNameNS(ns.w, 'tc');
+            const rowId = `${tableId}-r${rowIndex}`;
+            let colIndex = 0;
+
             for (const tc of tcNodes) {
-                cells.push(extractTextFromElement(tc, ns));
+                const cellText = extractTextFromElement(tc, ns);
+                const cellParagraphs = [];
+                const pNodes = tc.getElementsByTagNameNS(ns.w, 'p');
+                for (const p of pNodes) {
+                    cellParagraphs.push(extractTextFromElement(p, ns));
+                }
+
+                cells.push({
+                    text: cellText,
+                    tableId,
+                    rowId,
+                    cellId: `${rowId}-c${colIndex}`,
+                    rowIndex,
+                    columnIndex: colIndex,
+                    paragraphs: cellParagraphs,
+                });
+                colIndex++;
             }
             rows.push(cells);
+            rowIndex++;
         }
 
         return {
             type: 'table',
             index: tableIdx,
+            tableId,
             rows,
-            text: rows.map(r => r.join(' | ')).join('\n'),
+            text: rows.map(r => r.map(c =>
+                typeof c === 'object' ? c.text : c).join(' | ')).join('\n'),
             hasHeader: rows.length > 0,
             columnCount: rows.length > 0 ? rows[0].length : 0,
             rowCount: rows.length,
@@ -336,6 +427,65 @@ const DocumentParser = (() => {
         return text;
     }
 
+
+    /**
+     * Full parseNumbering implementation
+     * Maps numId → abstractNumId → levels (ilvl → start, numFmt, lvlText)
+     */
+    function parseNumbering(xmlStr) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xmlStr, 'application/xml');
+
+        if (doc.getElementsByTagName('parsererror').length) {
+            return {};
+        }
+
+        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const result = { abstractNums: {}, nums: {} };
+
+        // Parse abstractNum elements
+        const abstractNumNodes = doc.getElementsByTagNameNS(ns, 'abstractNum');
+        for (const an of abstractNumNodes) {
+            const abstractNumId = an.getAttribute('w:abstractNumId');
+            const levels = {};
+
+            const lvlNodes = an.getElementsByTagNameNS(ns, 'lvl');
+            for (const lvl of lvlNodes) {
+                const ilvl = parseInt(lvl.getAttribute('w:ilvl'), 10);
+                const startNode = lvl.getElementsByTagNameNS(ns, 'start')[0];
+                const numFmtNode = lvl.getElementsByTagNameNS(ns, 'numFmt')[0];
+                const lvlTextNode = lvl.getElementsByTagNameNS(ns, 'lvlText')[0];
+
+                levels[ilvl] = {
+                    start: startNode
+                        ? parseInt(startNode.getAttribute('w:val'), 10) : 1,
+                    numFmt: numFmtNode
+                        ? numFmtNode.getAttribute('w:val') : 'decimal',
+                    lvlText: lvlTextNode
+                        ? lvlTextNode.getAttribute('w:val') : '%1.',
+                };
+            }
+
+            result.abstractNums[abstractNumId] = { levels };
+        }
+
+        // Parse num elements (numId → abstractNumId mapping)
+        const numNodes = doc.getElementsByTagNameNS(ns, 'num');
+        for (const num of numNodes) {
+            const numId = num.getAttribute('w:numId');
+            const abstractNumIdRef =
+                num.getElementsByTagNameNS(ns, 'abstractNumId')[0];
+            if (abstractNumIdRef) {
+                result.nums[numId] = {
+                    abstractNumId: abstractNumIdRef.getAttribute('w:val'),
+                };
+            }
+        }
+
+        return result;
+    }
+
+
     /**
      * Parse footnotes.xml
      */
@@ -343,6 +493,8 @@ const DocumentParser = (() => {
         const footnotes = [];
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlStr, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) return [];
+
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         const fnNodes = doc.getElementsByTagNameNS(ns, 'footnote');
 
@@ -350,7 +502,6 @@ const DocumentParser = (() => {
             const id = fn.getAttribute('w:id');
             const type = fn.getAttribute('w:type');
             if (type === 'separator' || type === 'continuationSeparator') continue;
-
             const text = extractTextFromXmlNode(fn, ns);
             footnotes.push({ id, text, isEmpty: text.trim().length === 0 });
         }
@@ -364,6 +515,8 @@ const DocumentParser = (() => {
         const endnotes = [];
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlStr, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) return [];
+
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         const enNodes = doc.getElementsByTagNameNS(ns, 'endnote');
 
@@ -371,7 +524,6 @@ const DocumentParser = (() => {
             const id = en.getAttribute('w:id');
             const type = en.getAttribute('w:type');
             if (type === 'separator' || type === 'continuationSeparator') continue;
-
             const text = extractTextFromXmlNode(en, ns);
             endnotes.push({ id, text, isEmpty: text.trim().length === 0 });
         }
@@ -381,9 +533,7 @@ const DocumentParser = (() => {
     function extractTextFromXmlNode(node, ns) {
         let text = '';
         const tNodes = node.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) {
-            text += t.textContent;
-        }
+        for (const t of tNodes) { text += t.textContent; }
         return text;
     }
 
@@ -393,17 +543,17 @@ const DocumentParser = (() => {
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         let text = '';
         const tNodes = doc.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) {
-            text += t.textContent + ' ';
-        }
+        for (const t of tNodes) { text += t.textContent + ' '; }
         return text.trim();
     }
 
+
     function parseStyles(xmlStr) {
-        // Basic style extraction - map style IDs to names
         const styles = {};
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlStr, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) return {};
+
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         const styleNodes = doc.getElementsByTagNameNS(ns, 'style');
 
@@ -415,11 +565,6 @@ const DocumentParser = (() => {
             }
         }
         return styles;
-    }
-
-    function parseNumbering(xmlStr) {
-        // Basic numbering extraction
-        return {}; // Simplified - full implementation would track numId->abstractNumId mappings
     }
 
     /**
@@ -444,6 +589,8 @@ const DocumentParser = (() => {
                     style: `Heading${headingMatch[1].length}`,
                     runs: [{ text: headingMatch[2] }],
                     lineNumber: i + 1,
+                    isDirectQuote: false,
+                    quoteConfidence: 0,
                 });
             } else if (line.trim().length > 0) {
                 elements.push({
@@ -454,28 +601,23 @@ const DocumentParser = (() => {
                     runs: [{ text: line }],
                     lineNumber: i + 1,
                     isEmpty: false,
+                    isDirectQuote: false,
+                    quoteConfidence: 0,
                 });
             }
         }
 
         return {
-            type: 'markdown',
-            name: fileName,
-            elements,
-            footnotes: [],
-            endnotes: [],
-            headers: [],
-            footers: [],
-            styles: {},
-            numbering: {},
-            htmlPreview: '',
-            rawText: text,
-            wordCount: countWords(text),
+            type: 'markdown', name: fileName, elements,
+            footnotes: [], endnotes: [], headers: [], footers: [],
+            styles: {}, numbering: {}, htmlPreview: '',
+            rawText: text, wordCount: countWords(text),
             paragraphCount: elements.filter(el => el.type === 'paragraph').length,
             tableCount: 0,
             headingCount: elements.filter(el => el.type === 'heading').length,
         };
     }
+
 
     /**
      * Parse plain text file
@@ -496,47 +638,92 @@ const DocumentParser = (() => {
                     runs: [{ text: lines[i] }],
                     lineNumber: i + 1,
                     isEmpty: false,
+                    isDirectQuote: false,
+                    quoteConfidence: 0,
                 });
             }
         }
 
         return {
-            type: 'txt',
-            name: fileName,
-            elements,
-            footnotes: [],
-            endnotes: [],
-            headers: [],
-            footers: [],
-            styles: {},
-            numbering: {},
-            htmlPreview: '',
-            rawText: text,
-            wordCount: countWords(text),
-            paragraphCount: elements.length,
-            tableCount: 0,
-            headingCount: 0,
+            type: 'txt', name: fileName, elements,
+            footnotes: [], endnotes: [], headers: [], footers: [],
+            styles: {}, numbering: {}, htmlPreview: '',
+            rawText: text, wordCount: countWords(text),
+            paragraphCount: elements.length, tableCount: 0, headingCount: 0,
         };
     }
 
-    /**
-     * Assign stable IDs to all elements
-     */
-    function assignStableIds(docMap) {
-        let pIdx = 0;
-        let tIdx = 0;
-        let hIdx = 0;
 
+    /**
+     * Assign hashed IDs based on text content, style, and context
+     * Instead of sequential p-0001, uses content-based hashes for stability
+     */
+    function assignHashedIds(docMap) {
+        for (let i = 0; i < docMap.elements.length; i++) {
+            const el = docMap.elements[i];
+            const prevText = i > 0 ? (docMap.elements[i - 1].text || '') : '';
+            const contextStr = `${el.type}|${el.style || ''}|${el.text || ''}|${prevText.substring(0, 30)}|${i}`;
+            el.id = hashId(el.type, contextStr);
+        }
+    }
+
+    /**
+     * Generate a short hash-based ID
+     */
+    function hashId(prefix, input) {
+        // Simple FNV-1a 32-bit hash
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < input.length; i++) {
+            hash ^= input.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193);
+        }
+        // Convert to base36 for short representation
+        const hashStr = (hash >>> 0).toString(36).padStart(7, '0');
+        const typePrefix = prefix === 'heading' ? 'h' :
+            prefix === 'table' ? 't' : 'p';
+        return `${typePrefix}-${hashStr}`;
+    }
+
+    /**
+     * Detect direct quotes in elements
+     * Marks paragraphs that are entirely quoted text
+     */
+    function detectDirectQuotes(docMap) {
         for (const el of docMap.elements) {
-            if (el.type === 'heading') {
-                el.id = `h-${String(hIdx).padStart(4, '0')}`;
-                hIdx++;
-            } else if (el.type === 'paragraph') {
-                el.id = `p-${String(pIdx).padStart(4, '0')}`;
-                pIdx++;
-            } else if (el.type === 'table') {
-                el.id = `t-${String(tIdx).padStart(4, '0')}`;
-                tIdx++;
+            if (!el.text || el.type === 'heading') continue;
+
+            const text = el.text.trim();
+            let confidence = 0;
+
+            // Pattern 1: Entire paragraph in typographic quotes „..."
+            if (text.match(/^\u201E.*\u201C$/)) {
+                confidence = 0.95;
+            }
+            // Pattern 2: Entire paragraph in guillemets «...»
+            else if (text.match(/^\u00AB.*\u00BB$/)) {
+                confidence = 0.90;
+            }
+            // Pattern 3: Italic run covering entire paragraph
+            else if (el.runs && el.runs.length > 0 &&
+                el.runs.every(r => r.italic) && text.length > 20) {
+                confidence = 0.75;
+            }
+            // Pattern 4: Paragraph starts with em-dash (dialogue)
+            else if (text.match(/^\u2014\s/) || text.match(/^—\s/)) {
+                confidence = 0.80;
+            }
+            // Pattern 5: Block indented style (often "Quote" or "Citat")
+            else if (el.style && el.style.match(/quote|citat|blockquote/i)) {
+                confidence = 0.90;
+            }
+            // Pattern 6: Greek text (entire paragraph)
+            else if (text.match(/^[\u0370-\u03FF\u1F00-\u1FFF\s,.;·'"]+$/)) {
+                confidence = 0.85;
+            }
+
+            if (confidence > 0) {
+                el.isDirectQuote = true;
+                el.quoteConfidence = confidence;
             }
         }
     }
@@ -548,3 +735,8 @@ const DocumentParser = (() => {
     // Public API
     return { parse };
 })();
+
+// Node.js module export for testing
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = DocumentParser;
+}

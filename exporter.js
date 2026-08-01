@@ -6,8 +6,6 @@
 const Exporter = (() => {
     'use strict';
 
-
-
     /**
      * Build the full audit JSON object
      */
@@ -17,13 +15,21 @@ const Exporter = (() => {
         const verify = findings.filter(f => f.priority === 'PROVERITI').length;
         const recommendations = findings.filter(f => f.priority === 'PREPORUKA').length;
 
-        const canBeMarkedFinal = blockers === 0 && mandatory === 0;
+        const requiredChecksComplete =
+            options.aiGrammar === true &&
+            options.visualLayout === true;
+
+        const canBeMarkedFinal =
+            requiredChecksComplete &&
+            blockers === 0 &&
+            mandatory === 0 &&
+            verify === 0;
 
         let finalAssessment;
-        if (canBeMarkedFinal && verify === 0) {
-            finalAssessment = 'Tekstualni audit je završen. Nema otvorenih obaveznih stavki.';
-        } else if (canBeMarkedFinal) {
-            finalAssessment = `Tekstualni audit je završen. Nema obaveznih ispravki, ali ${verify} stavki zahteva ručnu proveru.`;
+        if (canBeMarkedFinal) {
+            finalAssessment = 'Audit je završen. Sve provere su prošle bez nalaza.';
+        } else if (blockers === 0 && mandatory === 0 && verify === 0) {
+            finalAssessment = 'Determinističke provere su završene. Gramatika, stil i vizuelni prelom nisu provereni.';
         } else {
             finalAssessment = `Dokument ima ${mandatory} obaveznih ispravki i ${blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
         }
@@ -39,17 +45,22 @@ const Exporter = (() => {
                 table_count: docMap.tableCount,
                 heading_count: docMap.headingCount,
                 audit_mode: options.auditMode || 'FULL_AUDIT',
-                render_engine: 'browser_deterministic',
+                render_engine: null,
             },
             scope: {
                 proofreading: true,
-                grammar: false, // No AI grammar check
+                grammar: false,
                 style: false,
                 bibliography: options.bibliography || false,
                 visual_layout: false,
                 fact_checking: false,
                 web_research: false,
                 note: 'Samo determinističke provere (rule-based). Jezička analiza zahteva AI modul.',
+            },
+            audit_status: {
+                status: 'DELIMIČAN',
+                linguistic_analysis: 'NIJE IZVRŠENA',
+                visual_review: 'NIJE IZVRŠEN',
             },
             summary: {
                 total_finding_categories: new Set(findings.map(f => f.category)).size,
@@ -67,8 +78,6 @@ const Exporter = (() => {
             global_patterns: extractGlobalPatterns(findings),
         };
     }
-
-
 
     /**
      * Generate Excel workbook with 3 sheets
@@ -88,6 +97,11 @@ const Exporter = (() => {
             ['Broj pasusa', auditJson.document.paragraph_count],
             ['Broj tabela', auditJson.document.table_count],
             ['Broj naslova', auditJson.document.heading_count],
+            [],
+            ['STATUS AUDITA'],
+            ['Status audita', auditJson.audit_status.status],
+            ['Jezička analiza', auditJson.audit_status.linguistic_analysis],
+            ['Vizuelni pregled', auditJson.audit_status.visual_review],
             [],
             ['REZULTATI'],
             ['Ukupno nalaza', auditJson.summary.total_occurrences],
@@ -153,14 +167,13 @@ const Exporter = (() => {
         return wb;
     }
 
-
-
     /**
      * Download Excel file
      */
-    function downloadExcel(auditJson) {
-        const wb = generateExcel(auditJson);
-        const fileName = `${auditJson.document.name.replace(/\.[^.]+$/, '')}_audit.xlsx`;
+    function downloadExcel(auditJson, exportFilter) {
+        const filtered = applyExportFilter(auditJson, exportFilter);
+        const wb = generateExcel(filtered);
+        const fileName = `${filtered.document.name.replace(/\.[^.]+$/, '')}_audit.xlsx`;
         XLSX.writeFile(wb, fileName);
     }
 
@@ -171,6 +184,7 @@ const Exporter = (() => {
         const lines = [];
         const s = auditJson.summary;
         const d = auditJson.document;
+        const st = auditJson.audit_status;
 
         lines.push(`# Lektorsko-korektorski audit — ${d.name}`);
         lines.push('');
@@ -178,6 +192,12 @@ const Exporter = (() => {
         lines.push(`**Verzija:** ${d.version_id}  `);
         lines.push(`**Režim:** ${d.audit_mode}  `);
         lines.push(`**Datum:** ${new Date().toLocaleDateString('sr-Latn-RS')}`);
+        lines.push('');
+        lines.push('## Status audita');
+        lines.push('');
+        lines.push(`- Status audita: **${st.status}**`);
+        lines.push(`- Jezička analiza: **${st.linguistic_analysis}**`);
+        lines.push(`- Vizuelni pregled: **${st.visual_review}**`);
         lines.push('');
 
         lines.push('## Opseg');
@@ -251,24 +271,36 @@ const Exporter = (() => {
         return lines.join('\n');
     }
 
-
-
     /**
      * Download Markdown file
      */
-    function downloadMarkdown(auditJson) {
-        const md = generateMarkdown(auditJson);
-        const fileName = `${auditJson.document.name.replace(/\.[^.]+$/, '')}_audit.md`;
+    function downloadMarkdown(auditJson, exportFilter) {
+        const filtered = applyExportFilter(auditJson, exportFilter);
+        const md = generateMarkdown(filtered);
+        const fileName = `${filtered.document.name.replace(/\.[^.]+$/, '')}_audit.md`;
         downloadTextFile(md, fileName, 'text/markdown');
     }
 
     /**
      * Download JSON file
      */
-    function downloadJson(auditJson) {
-        const json = JSON.stringify(auditJson, null, 2);
-        const fileName = `${auditJson.document.name.replace(/\.[^.]+$/, '')}_audit.json`;
+    function downloadJson(auditJson, exportFilter) {
+        const filtered = applyExportFilter(auditJson, exportFilter);
+        const json = JSON.stringify(filtered, null, 2);
+        const fileName = `${filtered.document.name.replace(/\.[^.]+$/, '')}_audit.json`;
         downloadTextFile(json, fileName, 'application/json');
+    }
+
+    /**
+     * Apply export filter (all findings or only open)
+     */
+    function applyExportFilter(auditJson, exportFilter) {
+        if (!exportFilter || exportFilter === 'all') return auditJson;
+
+        // Only open findings
+        const filtered = { ...auditJson };
+        filtered.findings = auditJson.findings.filter(f => f.status === 'OPEN');
+        return filtered;
     }
 
     /**
@@ -318,3 +350,8 @@ const Exporter = (() => {
         generateMarkdown,
     };
 })();
+
+// Node.js module export for testing
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = Exporter;
+}
