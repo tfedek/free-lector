@@ -1,7 +1,6 @@
 /**
- * Rule Engine Module
+ * Rule Engine Module — Round 4
  * Deterministic, rule-based checks for document auditing
- * No AI - pure regex, pattern matching, and structural analysis
  */
 
 const RuleEngine = (() => {
@@ -9,14 +8,10 @@ const RuleEngine = (() => {
 
     let findingCounter = 0;
     function resetCounter() { findingCounter = 0; }
-    function nextId() {
-        findingCounter++;
-        return `F-${String(findingCounter).padStart(4, '0')}`;
-    }
+    function nextId() { findingCounter++; return `F-${String(findingCounter).padStart(4, '0')}`; }
 
     /**
-     * Run all enabled checks against the document map.
-     * Each check returns { findings, scannedCount, skippedCount }.
+     * Run all enabled checks. Table cell checks run BEFORE passedChecks are formed.
      */
     function runAudit(docMap, options) {
         resetCounter();
@@ -42,79 +37,96 @@ const RuleEngine = (() => {
             { key: 'emptyHeadings', name: 'Prazni naslovi', fn: checkEmptyHeadings },
         ];
 
+        // Run per-element checks
+        const checkResults = {};
         for (const check of checks) {
             if (!options[check.key]) continue;
-
             const result = check.fn(docMap);
-
-            // Apply direct-quote handling: findings inside quotes get demoted
             for (const f of result.findings) {
                 if (f._element && f._element.isDirectQuote) {
-                    f.priority = 'PROVERITI';
-                    f.autoFixable = false;
-                    f.requiresSourceVerification = true;
-                    f.isDirectQuote = true;
+                    f.priority = 'PROVERITI'; f.autoFixable = false;
+                    f.requiresSourceVerification = true; f.isDirectQuote = true;
                 }
-                // Remove internal _element reference before output
                 delete f._element;
             }
-
+            checkResults[check.key] = result;
             findings.push(...result.findings);
-
-            if (result.findings.length === 0) {
-                passedChecks.push({
-                    area: check.name,
-                    result: 'Bez grešaka',
-                    count: result.scannedCount,
-                });
-            }
         }
 
-        // Additional pass: table cell-level checks (respects enabled options)
-        checkTableCells(docMap, findings, options);
+        // Run table cell checks BEFORE forming passedChecks
+        const cellFindings = checkTableCells(docMap, options);
+        findings.push(...cellFindings);
+
+        // Now form passedChecks (considers both element-level and cell-level findings)
+        for (const check of checks) {
+            if (!options[check.key]) continue;
+            const result = checkResults[check.key];
+            if (!result) continue;
+            const hasCellFindings = cellFindings.some(f => {
+                if (check.key === 'spacing' && f.category === 'Razmaci') return true;
+                if (check.key === 'brackets' && f.category === 'Zagrade') return true;
+                if (check.key === 'scriptMix' && f.category === 'Mešanje pisama') return true;
+                return false;
+            });
+            if (result.findings.length === 0 && !hasCellFindings) {
+                passedChecks.push({ area: check.name, result: 'Bez grešaka', count: result.scannedCount });
+            }
+        }
 
         return { findings, passedChecks };
     }
 
-    /**
-     * Additional pass: check table cells individually.
-     * Only runs checks that are enabled in options.
-     * Findings include tableId/rowId/cellId/rowIndex/columnIndex.
-     */
-    function checkTableCells(docMap, findings, options) {
+
+    // ==========================================
+    // TABLE CELL CHECKS — full spacing, all brackets {}, direct quote protection
+    // Returns findings array (not modifying external)
+    // ==========================================
+    function checkTableCells(docMap, options) {
+        const findings = [];
         const doSpacing = options.spacing === true;
         const doBrackets = options.brackets === true;
         const doScriptMix = options.scriptMix === true;
-
-        if (!doSpacing && !doBrackets && !doScriptMix) return;
+        if (!doSpacing && !doBrackets && !doScriptMix) return findings;
 
         for (const el of docMap.elements) {
             if (el.type !== 'table' || !el.rows) continue;
-
             for (const row of el.rows) {
                 for (const cell of row) {
                     if (!cell.text || cell.text.trim().length === 0) continue;
                     const text = cell.text;
-                    const cellMeta = {
-                        tableId: cell.tableId,
-                        rowId: cell.rowId,
-                        cellId: cell.cellId,
-                        rowIndex: cell.rowIndex,
-                        columnIndex: cell.columnIndex,
-                    };
+                    const cm = { tableId: cell.tableId, rowId: cell.rowId, cellId: cell.cellId, rowIndex: cell.rowIndex, columnIndex: cell.columnIndex };
 
                     if (doSpacing) {
-                        const doubleSpace = /  +/g;
+                        // All spacing checks (not just double spaces)
                         let m;
-                        while ((m = doubleSpace.exec(text)) !== null) {
+                        const dbl = /  +/g;
+                        while ((m = dbl.exec(text)) !== null) {
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({
-                                element: el, category: 'Razmaci', priority: 'OBAVEZNO',
-                                confidence: 0.99, original: ctx,
-                                replacement: ctx.replace(/  +/g, ' '),
-                                rationale: 'Višestruki razmak u ćeliji tabele.',
-                                autoFixable: true, ...cellMeta,
-                            }));
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak u ćeliji.', autoFixable: true, ...cm }));
+                        }
+                        const sbp = / +([,.:;!?])/g;
+                        while ((m = sbp.exec(text)) !== null) {
+                            const ctx = getContext(text, m.index, 20);
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                        }
+                        const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
+                        while ((m = nsa.exec(text)) !== null) {
+                            if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\/)) continue;
+                            const ctx = getContext(text, m.index, 20);
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                        }
+                    }
+
+                    if (doBrackets) {
+                        for (const [open, close] of [['(',')'],['[',']'],['{','}']]) {
+                            let depth = 0;
+                            for (let i = 0; i < text.length; i++) {
+                                if (text[i] === open) depth++;
+                                else if (text[i] === close) depth--;
+                            }
+                            if (depth !== 0) {
+                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale: `Neuparene zagrade u ćeliji (${cell.cellId}).`, ...cm }));
+                            }
                         }
                     }
 
@@ -122,116 +134,52 @@ const RuleEngine = (() => {
                         const words = text.match(/[\p{L}\p{M}]+/gu) || [];
                         for (const word of words) {
                             if (word.length < 2) continue;
-                            const hasCyr = /[\u0400-\u04FF]/.test(word);
-                            const hasLat = /[a-zA-Z\u00C0-\u024F]/.test(word);
-                            if (hasCyr && hasLat) {
-                                findings.push(makeFinding({
-                                    element: el, category: 'Mešanje pisama',
-                                    priority: 'OBAVEZNO', confidence: 0.96,
-                                    original: word,
-                                    replacement: '[prebaciti celu reč na jedno pismo]',
-                                    rationale: `Pomešana slova u ćeliji tabele: \u201e${word}\u201c.`,
-                                    ...cellMeta,
-                                }));
+                            if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
+                                findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ćeliji: \u201e${word}\u201c.`, ...cm }));
                             }
                         }
                     }
 
-                    if (doBrackets) {
-                        for (const [open, close] of [['(',')'],['[',']']]) {
-                            let depth = 0;
-                            for (let i = 0; i < text.length; i++) {
-                                if (text[i] === open) depth++;
-                                else if (text[i] === close) depth--;
-                            }
-                            if (depth !== 0) {
-                                findings.push(makeFinding({
-                                    element: el, category: 'Zagrade',
-                                    priority: 'OBAVEZNO', confidence: 0.95,
-                                    original: text.substring(0, 50),
-                                    replacement: `[neuparene zagrade ${open}${close} u ćeliji]`,
-                                    rationale: `Neuparene zagrade u ćeliji tabele (${cell.cellId}).`,
-                                    ...cellMeta,
-                                }));
+                    // Apply direct quote protection to cell findings
+                    if (el.isDirectQuote) {
+                        for (const f of findings) {
+                            if (f.cellId === cell.cellId && f.priority !== 'PROVERITI') {
+                                f.priority = 'PROVERITI'; f.autoFixable = false; f.requiresSourceVerification = true;
                             }
                         }
                     }
                 }
             }
         }
+        return findings;
     }
 
 
     // ==========================================
-    // CHECK: Unbalanced brackets
+    // BRACKETS — skip table elements (checked per-cell)
     // ==========================================
     function checkBrackets(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        const pairs = [['(', ')'], ['[', ']'], ['{', '}']];
-        const pairNames = { '(': 'obla zagrada', '[': 'uglasta zagrada', '{': 'vitičasta zagrada' };
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const pairs = [['(',')'],['[',']'],['{','}']];
+        const names = {'(':'obla','[':'uglasta','{':'vitičasta'};
         for (const el of docMap.elements) {
-            if (!el.text || el.text.trim().length === 0) { skippedCount++; continue; }
-            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
+            if (!el.text || !el.text.trim()) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-
-            for (const [open, close] of pairs) {
-                let depth = 0;
-                let positions = [];
-
+            for (const [o,c] of pairs) {
+                let depth = 0, positions = [];
                 for (let i = 0; i < el.text.length; i++) {
-                    if (el.text[i] === open) { depth++; positions.push(i); }
-                    else if (el.text[i] === close) {
-                        depth--;
-                        if (depth < 0) {
-                            const ctx = getContext(el.text, i, 40);
-                            findings.push(makeFinding({
-                                element: el,
-                                category: 'Zagrade',
-                                priority: 'OBAVEZNO',
-                                confidence: 0.98,
-                                original: ctx,
-                                replacement: `[ukloniti višak \u201e${close}\u201c ili dodati \u201e${open}\u201c]`,
-                                rationale: `Zatvorena ${pairNames[open]} bez odgovarajuće otvorene.`,
-                            }));
-                            depth = 0;
-                        }
-                    }
+                    if (el.text[i] === o) { depth++; positions.push(i); }
+                    else if (el.text[i] === c) { depth--; if (depth < 0) { findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${c}\u201c ili dodati \u201e${o}\u201c]`, rationale: `Zatvorena ${names[o]} zagrada bez otvorene.` })); depth = 0; } }
                 }
-
-                if (depth > 0) {
-                    const lastOpen = positions[positions.length - 1];
-                    const ctx = getContext(el.text, lastOpen, 40);
-                    findings.push(makeFinding({
-                        element: el,
-                        category: 'Zagrade',
-                        priority: 'OBAVEZNO',
-                        confidence: 0.98,
-                        original: ctx,
-                        replacement: `[dodati \u201e${close}\u201c ili ukloniti \u201e${open}\u201c]`,
-                        rationale: `Otvorena ${pairNames[open]} bez odgovarajuće zatvorene.`,
-                    }));
-                }
+                if (depth > 0) { const p = positions[positions.length-1]; findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, p, 40), replacement: `[dodati \u201e${c}\u201c ili ukloniti \u201e${o}\u201c]`, rationale: `Otvorena ${names[o]} zagrada bez zatvorene.` })); }
             }
-
-            // Special check: ; where ) should be
-            const semiPattern = /\([^)]*;(?=[^(]*$)/g;
-            let match;
-            while ((match = semiPattern.exec(el.text)) !== null) {
-                const fragment = el.text.substring(match.index);
-                if (fragment.indexOf(')') === -1 || fragment.indexOf(';') < fragment.indexOf(')')) {
-                    const ctx = getContext(el.text, match.index, 50);
-                    findings.push(makeFinding({
-                        element: el,
-                        category: 'Zagrade',
-                        priority: 'PROVERITI',
-                        confidence: 0.75,
-                        original: ctx,
-                        replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]',
-                        rationale: 'Tačka-zarez unutar nezatvorene zagrade \u2014 mogući artefakt find-replace operacije.',
-                    }));
+            // ; where ) should be
+            const sp = /\([^)]*;(?=[^(]*$)/g; let m;
+            while ((m = sp.exec(el.text)) !== null) {
+                const frag = el.text.substring(m.index);
+                if (frag.indexOf(')') === -1 || frag.indexOf(';') < frag.indexOf(')')) {
+                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(el.text, m.index, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.' }));
                 }
             }
         }
@@ -240,236 +188,101 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // CHECK: Quotes (straight vs typographic)
-    // Consolidates once for ENTIRE DOCUMENT, not per paragraph
+    // QUOTES — global consolidation, multi-paragraph balance
     // ==========================================
     function checkQuotes(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        let totalStraightQuotes = 0;
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        let totalStraight = 0;
+        // Multi-paragraph typographic quote balance
+        let globalOpen = 0, globalClose = 0;
 
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             scannedCount++;
-
-            const straightMatches = el.text.match(/"/g) || [];
-            totalStraightQuotes += straightMatches.length;
-
-            // Unmatched typographic quotes (per-element, this is structural)
-            const openDouble = (el.text.match(/\u201E/g) || []).length;
-            const closeDouble = (el.text.match(/\u201C/g) || []).length;
-            if (openDouble !== closeDouble) {
-                findings.push(makeFinding({
-                    element: el,
-                    category: 'Tipografija',
-                    priority: 'OBAVEZNO',
-                    confidence: 0.90,
-                    original: `[${openDouble}\u00D7 \u201e vs ${closeDouble}\u00D7 \u201c]`,
-                    replacement: '[upariti otvarajuće i zatvarajuće navodnike]',
-                    rationale: `Broj otvarajućih navodnika \u201e ne odgovara broju zatvarajućih \u201c.`,
-                }));
-            }
+            totalStraight += (el.text.match(/"/g) || []).length;
+            globalOpen += (el.text.match(/\u201E/g) || []).length;
+            globalClose += (el.text.match(/\u201C/g) || []).length;
         }
 
-        // Report straight quotes once for entire document
-        // Use a synthetic element (not tied to any specific paragraph)
-        // to avoid accidental direct-quote priority demotion
-        if (totalStraightQuotes > 0) {
-            const syntheticElement = {
-                id: 'doc-global',
-                type: 'document',
-                text: '',
-                section: '(ceo dokument)',
-                isDirectQuote: false,
-                quoteConfidence: 0,
-            };
-            findings.push(makeFinding({
-                element: syntheticElement,
-                category: 'Tipografija',
-                priority: 'OBAVEZNO',
-                confidence: 0.95,
-                original: `[${totalStraightQuotes} ravnih navodnika u dokumentu]`,
-                replacement: '[zameniti sve ravne navodnike tipografskim: \u201e...\u201c]',
-                rationale: `Pronađeno ukupno ${totalStraightQuotes} ravnih navodnika u celom dokumentu. Srpski standard: \u201e...\u201c (spoljni) ili \u2018...\u2019 (unutrašnji).`,
-                autoFixable: true,
-                globalPattern: true,
-            }));
+        if (totalStraight > 0) {
+            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${totalStraight} ravnih navodnika u dokumentu]`, replacement: '[zameniti tipografskim: \u201e...\u201c]', rationale: `Ukupno ${totalStraight} ravnih navodnika. Standard: \u201e...\u201c.`, autoFixable: true, globalPattern: true }));
+        }
+
+        // Multi-paragraph balance check
+        if (globalOpen !== globalClose) {
+            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.88, original: `[${globalOpen}\u00D7 \u201e vs ${globalClose}\u00D7 \u201c u celom dokumentu]`, replacement: '[upariti navodnike]', rationale: 'Neupareni tipografski navodnici kroz ceo dokument (moguć višepasusni citat).' }));
         }
 
         return { findings, scannedCount, skippedCount };
     }
 
-
     // ==========================================
-    // CHECK: Markdown artifacts
+    // MARKDOWN ARTIFACTS
     // ==========================================
     function checkMarkdownArtifacts(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         if (docMap.type === 'markdown') return { findings, scannedCount, skippedCount };
-
         const patterns = [
-            { re: /(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, desc: 'boldovani markdown (**tekst**)' },
-            { re: /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, desc: 'kurzivni markdown (*tekst*)' },
-            { re: /(?:^|\s)__[^_]+__(?:\s|$)/gm, desc: 'boldovani markdown (__tekst__)' },
-            { re: /(?:^|\s)_[^_]+_(?:\s|$)/gm, desc: 'kurzivni markdown (_tekst_)' },
-            { re: /^#{1,6}\s/gm, desc: 'markdown naslov (#)' },
-            { re: /^\s*[-*+]\s/gm, desc: 'markdown lista (- ili *)' },
-            { re: /^\s*>\s/gm, desc: 'markdown blockquote (>)' },
-            { re: /\[([^\]]+)\]\([^)]+\)/g, desc: 'markdown link [tekst](url)' },
-            { re: /```/g, desc: 'markdown code block (```)' },
-            { re: /(?:^|\s)`[^`]+`(?:\s|$)/g, desc: 'markdown inline code (`kod`)' },
+            { re: /(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, desc: '**bold**' },
+            { re: /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, desc: '*italic*' },
+            { re: /(?:^|\s)__[^_]+__(?:\s|$)/gm, desc: '__bold__' },
+            { re: /(?:^|\s)_[^_]+_(?:\s|$)/gm, desc: '_italic_' },
+            { re: /^#{1,6}\s/gm, desc: '# naslov' },
+            { re: /^\s*[-*+]\s/gm, desc: '- lista' },
+            { re: /^\s*>\s/gm, desc: '> blockquote' },
+            { re: /\[([^\]]+)\]\([^)]+\)/g, desc: '[link](url)' },
+            { re: /```/g, desc: '```' },
+            { re: /(?:^|\s)`[^`]+`(?:\s|$)/g, desc: '`code`' },
         ];
-
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             scannedCount++;
-
-            for (const pat of patterns) {
-                pat.re.lastIndex = 0;
-                let m;
-                while ((m = pat.re.exec(el.text)) !== null) {
-                    findings.push(makeFinding({
-                        element: el,
-                        category: 'Markdown artefakt',
-                        priority: 'OBAVEZNO',
-                        confidence: 0.92,
-                        original: m[0].trim(),
-                        replacement: '[ukloniti markdown sintaksu, primeniti pravo formatiranje]',
-                        rationale: `Ostatak ${pat.desc} \u2014 verovatno nije pretvoreno u formatiranje.`,
-                    }));
-                }
-            }
+            for (const pat of patterns) { pat.re.lastIndex = 0; let m; while ((m = pat.re.exec(el.text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: m[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc}.` })); } }
         }
         return { findings, scannedCount, skippedCount };
     }
 
 
     // ==========================================
-    // CHECK: Spacing and punctuation
+    // SPACING — skips tables (checked per-cell)
     // ==========================================
     function checkSpacing(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
-            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-            const text = el.text;
-            let m;
-
-            // Double spaces
-            const doubleSpace = /  +/g;
-            while ((m = doubleSpace.exec(text)) !== null) {
-                const ctx = getContext(text, m.index, 25);
-                findings.push(makeFinding({
-                    element: el, category: 'Razmaci', priority: 'OBAVEZNO',
-                    confidence: 0.99, original: ctx,
-                    replacement: ctx.replace(/  +/g, ' '),
-                    rationale: 'Višestruki razmak.', autoFixable: true,
-                }));
-            }
-
-            // Space before punctuation
-            const spaceBeforePunct = / +([,.:;!?])/g;
-            while ((m = spaceBeforePunct.exec(text)) !== null) {
-                const before = text.substring(Math.max(0, m.index - 5), m.index);
-                if (before.match(/https?:$/) || before.match(/\d$/)) continue;
-                const ctx = getContext(text, m.index, 20);
-                findings.push(makeFinding({
-                    element: el, category: 'Razmaci', priority: 'OBAVEZNO',
-                    confidence: 0.97, original: ctx,
-                    replacement: ctx.replace(/ +([,.:;!?])/, '$1'),
-                    rationale: `Razmak pre interpunkcijskog znaka \u201e${m[1]}\u201c.`,
-                    autoFixable: true,
-                }));
-            }
-
-            // Space before closing bracket
-            const spaceBeforeClose = / +([)\]}>»\u201C])/g;
-            while ((m = spaceBeforeClose.exec(text)) !== null) {
-                const ctx = getContext(text, m.index, 20);
-                findings.push(makeFinding({
-                    element: el, category: 'Razmaci', priority: 'PREPORUKA',
-                    confidence: 0.90, original: ctx,
-                    replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'),
-                    rationale: 'Razmak pre zatvorene zagrade/navodnika.',
-                    autoFixable: true,
-                }));
-            }
-
-            // Space after opening bracket
-            const spaceAfterOpen = /([(\[{<«\u201E]) +/g;
-            while ((m = spaceAfterOpen.exec(text)) !== null) {
-                const ctx = getContext(text, m.index, 20);
-                findings.push(makeFinding({
-                    element: el, category: 'Razmaci', priority: 'PREPORUKA',
-                    confidence: 0.90, original: ctx,
-                    replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'),
-                    rationale: 'Razmak posle otvorene zagrade/navodnika.',
-                    autoFixable: true,
-                }));
-            }
-
-            // No space after comma/semicolon/colon
-            const noSpaceAfterPunct = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
-            while ((m = noSpaceAfterPunct.exec(text)) !== null) {
-                const ctx5 = text.substring(Math.max(0, m.index - 10), m.index + 10);
-                if (ctx5.match(/https?:/) || ctx5.match(/\w:\\/)) continue;
-                const ctx = getContext(text, m.index, 20);
-                findings.push(makeFinding({
-                    element: el, category: 'Razmaci', priority: 'OBAVEZNO',
-                    confidence: 0.85, original: ctx,
-                    replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'),
-                    rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`,
-                    autoFixable: true,
-                }));
-            }
+            const text = el.text; let m;
+            const dbl = /  +/g;
+            while ((m = dbl.exec(text)) !== null) { const ctx = getContext(text, m.index, 25); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak.', autoFixable: true })); }
+            const sbp = / +([,.:;!?])/g;
+            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/) || b.match(/\d$/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true })); }
+            const sbc = / +([)\]}>»\u201C])/g;
+            while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true })); }
+            const sao = /([(\[{<«\u201E]) +/g;
+            while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true })); }
+            const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
+            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true })); }
         }
         return { findings, scannedCount, skippedCount };
     }
 
-
     // ==========================================
-    // CHECK: Script mixing (Cyrillic/Latin in same word)
+    // SCRIPT MIXING — skips tables, Unicode tokenization
     // ==========================================
     function checkScriptMixing(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        const cyrillicRe = /[\u0400-\u04FF]/;
-        const latinRe = /[a-zA-Z\u00C0-\u024F]/;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
-            if (el.type === 'table') { skippedCount++; continue; } // checked per-cell
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
             const words = el.text.match(/[\p{L}\p{M}]+/gu) || [];
-
             for (const word of words) {
                 if (word.length < 2) continue;
-                const hasCyrillic = cyrillicRe.test(word);
-                const hasLatin = latinRe.test(word);
-
-                if (hasCyrillic && hasLatin) {
-                    const cyrCount = (word.match(/[\u0400-\u04FF]/g) || []).length;
-                    const latCount = (word.match(/[a-zA-Z\u00C0-\u024F]/g) || []).length;
-                    const dominant = cyrCount > latCount ? 'ćirilica' : 'latinica';
-
-                    findings.push(makeFinding({
-                        element: el,
-                        category: 'Mešanje pisama',
-                        priority: 'OBAVEZNO',
-                        confidence: 0.96,
-                        original: word,
-                        replacement: `[prebaciti celu reč na ${dominant}]`,
-                        rationale: `Reč \u201e${word}\u201c sadrži pomešana slova ćirilice i latinice (${cyrCount} ćir. + ${latCount} lat.). Moguć OCR artefakt ili slučajna promena tastature.`,
-                    }));
+                if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
+                    const cc = (word.match(/[\u0400-\u04FF]/g)||[]).length;
+                    const lc = (word.match(/[a-zA-Z\u00C0-\u024F]/g)||[]).length;
+                    findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: `[prebaciti na ${cc>lc?'ćirilica':'latinica'}]`, rationale: `Reč \u201e${word}\u201c: ${cc} ćir. + ${lc} lat.` }));
                 }
             }
         }
@@ -478,290 +291,198 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // CHECK: Greek text without translation
+    // GREEK WITHOUT TRANSLATION
     // ==========================================
     function checkGreekWithoutTranslation(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        const greekBlockRe = /[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s,;\u00B7.'"\u0300-\u036F\u1DC0-\u1DFF]{2,}/g;
-        const translationNearby = /[(\u201E\u201A""][^)"\u201C"]*[\u0400-\u04FFa-zA-Z\u00C0-\u024F]{5,}[^)"\u201C"]*[)"\u201C""]/;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const gRe = /[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s,;\u00B7.'"\u0300-\u036F\u1DC0-\u1DFF]{2,}/g;
+        const trNear = /[(\u201E\u201A""][^)"\u201C"]*[\u0400-\u04FFa-zA-Z\u00C0-\u024F]{5,}[^)"\u201C"]*[)"\u201C""]/;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
-            scannedCount++;
-            greekBlockRe.lastIndex = 0;
-            let m;
-            while ((m = greekBlockRe.exec(el.text)) !== null) {
-                const afterGreek = el.text.substring(m.index + m[0].length, m.index + m[0].length + 200);
-                const beforeGreek = el.text.substring(Math.max(0, m.index - 100), m.index);
-                const hasTranslationAfter = translationNearby.test(afterGreek.substring(0, 150));
-                const hasTranslationBefore = beforeGreek.match(/[(\u201E\u201A].*[\u0400-\u04FFa-zA-Z]{5,}.*[)\u201C"]/);
-                const isGreekInParens = beforeGreek.match(/\(\s*$/) && afterGreek.match(/^\s*\)/);
-
-                if (!hasTranslationAfter && !hasTranslationBefore && !isGreekInParens) {
-                    const greekSnippet = m[0].length > 40 ? m[0].substring(0, 40) + '...' : m[0];
-                    findings.push(makeFinding({
-                        element: el,
-                        category: 'Grčki bez prevoda',
-                        priority: 'PROVERITI',
-                        confidence: 0.75,
-                        original: greekSnippet,
-                        replacement: '[dodati srpski prevod u zagradi ili narednoj rečenici]',
-                        rationale: 'Grčki citat/termin bez vidljivog prevoda u neposrednoj blizini (200 znakova).',
-                        requiresSourceVerification: true,
-                    }));
-                }
+            scannedCount++; gRe.lastIndex = 0; let m;
+            while ((m = gRe.exec(el.text)) !== null) {
+                const after = el.text.substring(m.index+m[0].length, m.index+m[0].length+200);
+                const before = el.text.substring(Math.max(0,m.index-100), m.index);
+                if (trNear.test(after.substring(0,150))) continue;
+                if (before.match(/[(\u201E\u201A].*[\u0400-\u04FFa-zA-Z]{5,}.*[)\u201C"]/)) continue;
+                if (before.match(/\(\s*$/) && after.match(/^\s*\)/)) continue;
+                const snip = m[0].length > 40 ? m[0].substring(0,40)+'...' : m[0];
+                findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u blizini.', requiresSourceVerification: true }));
             }
         }
         return { findings, scannedCount, skippedCount };
     }
 
-
     // ==========================================
-    // CHECK: Duplicate words
+    // DUPLICATE WORDS
     // ==========================================
     function checkDuplicateWords(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        const allowedDuplicates = new Set(['ha', 'da', 'ne', 'vrlo', 'još', 'baš', 'sve']);
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             scannedCount++;
-            const dupeRe = /\b(\p{L}+)\s+\1\b/giu;
-            let m;
-            while ((m = dupeRe.exec(el.text)) !== null) {
-                const word = m[1].toLowerCase();
-                if (allowedDuplicates.has(word)) continue;
-                if (word.length < 2) continue;
-                findings.push(makeFinding({
-                    element: el, category: 'Duple reči', priority: 'OBAVEZNO',
-                    confidence: 0.95, original: m[0], replacement: m[1],
-                    rationale: `Ponovljena reč \u201e${m[1]}\u201c \u2014 verovatno greška pri kucanju.`,
-                    autoFixable: true,
-                }));
+            const re = /\b(\p{L}+)\s+\1\b/giu; let m;
+            while ((m = re.exec(el.text)) !== null) {
+                if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
+                findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
             }
         }
         return { findings, scannedCount, skippedCount };
     }
 
     // ==========================================
-    // CHECK: TOC vs actual headings
+    // TOC VS HEADINGS
     // ==========================================
     function checkTocVsHeadings(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-
-        const headings = docMap.elements
-            .filter(el => el.type === 'heading' && el.text.trim().length > 0)
-            .map(el => ({ text: el.text.trim(), level: el.headingLevel, id: el.id }));
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const headings = docMap.elements.filter(e => e.type === 'heading' && e.text.trim()).map(e => ({ text: e.text.trim(), level: e.headingLevel, id: e.id }));
         if (headings.length < 2) return { findings, scannedCount, skippedCount };
-
-        const tocPattern = /^(.+?)\.{3,}\s*\d+\s*$/;
+        const tocPat = /^(.+?)\.{3,}\s*\d+\s*$/;
         const tocEntries = [];
-        for (const el of docMap.elements) {
-            if (el.type !== 'paragraph') continue;
-            const m = el.text.match(tocPattern);
-            if (m) { tocEntries.push({ text: m[1].trim(), element: el }); }
-        }
+        for (const el of docMap.elements) { if (el.type !== 'paragraph') continue; const m2 = el.text.match(tocPat); if (m2) tocEntries.push({ text: m2[1].trim(), element: el }); }
         scannedCount = tocEntries.length;
-        if (tocEntries.length === 0) return { findings, scannedCount, skippedCount };
-
-        for (const tocEntry of tocEntries) {
-            const normalizedToc = tocEntry.text.replace(/\s+/g, ' ').toLowerCase();
-            const matchingHeading = headings.find(h =>
-                h.text.replace(/\s+/g, ' ').toLowerCase() === normalizedToc);
-
-            if (!matchingHeading) {
-                const closeMatch = headings.find(h =>
-                    levenshteinDistance(h.text.toLowerCase(), normalizedToc) <= 3);
-                if (closeMatch) {
-                    findings.push(makeFinding({
-                        element: tocEntry.element, category: 'TOC/naslovi',
-                        priority: 'OBAVEZNO', confidence: 0.88,
-                        original: `TOC: \u201e${tocEntry.text}\u201c`,
-                        replacement: `Uskladiti sa naslovom: \u201e${closeMatch.text}\u201c`,
-                        rationale: 'Naslov u sadržaju se razlikuje od stvarnog naslova u dokumentu.',
-                    }));
-                } else {
-                    findings.push(makeFinding({
-                        element: tocEntry.element, category: 'TOC/naslovi',
-                        priority: 'PROVERITI', confidence: 0.70,
-                        original: `TOC: \u201e${tocEntry.text}\u201c`,
-                        replacement: '[proveriti da li ovaj naslov postoji u dokumentu]',
-                        rationale: 'Stavka iz sadržaja nije pronađena među naslovima u dokumentu.',
-                    }));
-                }
-            }
+        for (const te of tocEntries) {
+            const norm = te.text.replace(/\s+/g,' ').toLowerCase();
+            if (headings.find(h => h.text.replace(/\s+/g,' ').toLowerCase() === norm)) continue;
+            const close = headings.find(h => levenshteinDistance(h.text.toLowerCase(), norm) <= 3);
+            if (close) { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'OBAVEZNO', confidence: 0.88, original: `TOC: \u201e${te.text}\u201c`, replacement: `Uskladiti: \u201e${close.text}\u201c`, rationale: 'Razlika TOC i naslova.' })); }
+            else { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `TOC: \u201e${te.text}\u201c`, replacement: '[proveriti]', rationale: 'TOC stavka bez odgovarajućeg naslova.' })); }
         }
         return { findings, scannedCount, skippedCount };
     }
 
 
     // ==========================================
-    // CHECK: Numbering (using OOXML data first, text fallback)
-    // Removed off-by-one skip per spec
+    // NUMBERING — numeric formats only, grouped by consecutive runs,
+    // proper expectedLabel via formatter
     // ==========================================
     function checkNumbering(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
+        const findings = []; let scannedCount = 0, skippedCount = 0;
 
-        // Strategy 1: Use OOXML numbering data if available
-        // Only include numeric formats (exclude bullet/none)
+        // Strategy 1: OOXML data (numeric formats only)
         const ooxmlNumbered = docMap.elements.filter(el =>
-            el.numId && el.displayedNumber !== null && el.displayedNumber !== undefined &&
+            el.numId && el.displayedNumber != null &&
             el.numFmt && el.numFmt !== 'bullet' && el.numFmt !== 'none');
 
         if (ooxmlNumbered.length > 1) {
             scannedCount = ooxmlNumbered.length;
-            // Group by listInstanceId
             const byList = {};
             for (const el of ooxmlNumbered) {
-                const key = el.listInstanceId || `${el.numId}-${el.numLevel || 0}`;
+                const key = el.listInstanceId || `${el.numId}-${el.numLevel||0}`;
                 if (!byList[key]) byList[key] = [];
                 byList[key].push(el);
             }
-
             for (const [, items] of Object.entries(byList)) {
                 for (let i = 1; i < items.length; i++) {
-                    const prev = items[i - 1];
-                    const curr = items[i];
+                    const prev = items[i-1], curr = items[i];
                     const expected = prev.displayedNumber + 1;
-
                     if (curr.displayedNumber !== expected) {
-                        const prevLabel = prev.displayedLabel || String(prev.displayedNumber);
-                        const currLabel = curr.displayedLabel || String(curr.displayedNumber);
-                        const expectedLabel = curr.displayedLabel
-                            ? curr.displayedLabel.replace(String(curr.displayedNumber), String(expected))
-                            : String(expected);
-                        findings.push(makeFinding({
-                            element: curr,
-                            category: 'Numeracija',
-                            priority: 'OBAVEZNO',
-                            confidence: 0.92,
-                            original: `Stavka ${currLabel} (prethodno: ${prevLabel})`,
-                            replacement: `Očekivano: ${expectedLabel}`,
-                            rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.`,
-                        }));
+                        // Compute expectedLabel using same formatter
+                        const lvlText = curr.displayedLabel ? guessLvlText(curr.displayedLabel, curr.displayedNumber) : '%1.';
+                        const expLabel = lvlText.replace(/%\d/, String(expected));
+                        findings.push(makeFinding({ element: curr, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.92, original: `Stavka ${curr.displayedLabel||curr.displayedNumber} (prethodno: ${prev.displayedLabel||prev.displayedNumber})`, replacement: `Očekivano: ${expLabel}`, rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.` }));
                     }
                 }
             }
             return { findings, scannedCount, skippedCount };
         }
 
-        // Strategy 2: Fallback to text-based detection
-        const numberedParas = [];
+        // Strategy 2: Text-based, grouped by CONSECUTIVE runs
+        // A plain paragraph, heading, or table breaks a list
+        const lists = [];
+        let currentList = null;
         for (const el of docMap.elements) {
-            if (!el.text) { skippedCount++; continue; }
-            scannedCount++;
+            if (!el.text) continue;
             const m = el.text.match(/^\s*(\d+)[.)]\s/);
             if (m) {
-                numberedParas.push({ num: parseInt(m[1], 10), element: el });
+                if (!currentList) currentList = [];
+                currentList.push({ num: parseInt(m[1], 10), element: el });
+            } else {
+                if (currentList) { lists.push(currentList); currentList = null; }
             }
         }
+        if (currentList) lists.push(currentList);
 
-        for (let i = 1; i < numberedParas.length; i++) {
-            const prev = numberedParas[i - 1];
-            const curr = numberedParas[i];
-            if (curr.num === 1) continue; // New list restart
-
-            const expected = prev.num + 1;
-            if (curr.num !== expected) {
-                findings.push(makeFinding({
-                    element: curr.element,
-                    category: 'Numeracija',
-                    priority: 'OBAVEZNO',
-                    confidence: 0.85,
-                    original: `Stavka ${curr.num} (prethodno: ${prev.num})`,
-                    replacement: `Očekivano: ${expected}`,
-                    rationale: `Numeracija liste preskače sa ${prev.num} na ${curr.num}. Očekivano je ${expected}.`,
-                }));
+        for (const list of lists) {
+            scannedCount += list.length;
+            for (let i = 1; i < list.length; i++) {
+                const prev = list[i-1], curr = list[i];
+                if (curr.num === 1) continue;
+                const expected = prev.num + 1;
+                if (curr.num !== expected) {
+                    findings.push(makeFinding({ element: curr.element, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.85, original: `Stavka ${curr.num} (prethodno: ${prev.num})`, replacement: `Očekivano: ${expected}`, rationale: `Numeracija preskače sa ${prev.num} na ${curr.num}.` }));
+                }
             }
         }
-
-        if (numberedParas.length > 0 && numberedParas[0].num > 1) {
-            findings.push(makeFinding({
-                element: numberedParas[0].element,
-                category: 'Numeracija',
-                priority: 'PROVERITI',
-                confidence: 0.70,
-                original: `Lista počinje brojem ${numberedParas[0].num}`,
-                replacement: '[proveriti da li lista treba da počne od 1]',
-                rationale: 'Numerisana lista ne počinje od 1.',
-            }));
-        }
-
         return { findings, scannedCount, skippedCount };
+    }
+
+    function guessLvlText(label, num) {
+        // Try to guess lvlText pattern from a displayed label
+        return label.replace(String(num), '%1');
     }
 
 
     // ==========================================
-    // CHECK: Dashes and ranges
+    // DASHES — no paren skip, exclude ISO dates/phones/ISBN/identifiers
     // ==========================================
     function checkDashes(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
-            scannedCount++;
-            let m;
+            scannedCount++; let m;
 
-            // Numeric ranges with hyphen instead of en-dash
+            // Numeric ranges with hyphen
             const rangeRe = /(\d{1,4})\s*-\s*(\d{1,4})/g;
             while ((m = rangeRe.exec(el.text)) !== null) {
-                if (m.index > 0 && el.text[m.index - 1] === '(') continue;
-                findings.push(makeFinding({
-                    element: el, category: 'Tipografija', priority: 'OBAVEZNO',
-                    confidence: 0.92, original: m[0],
-                    replacement: `${m[1]}\u2013${m[2]}`,
-                    rationale: 'Brojčani raspon treba pisati sa en-dash (\u2013), ne sa običnom crticom (-).',
-                    autoFixable: true,
-                }));
+                const fullMatch = m[0];
+                const ctx20 = el.text.substring(Math.max(0, m.index-20), m.index + fullMatch.length + 20);
+
+                // Exclude ISO dates (2026-08-01)
+                if (ctx20.match(/\d{4}-\d{2}-\d{2}/)) continue;
+                // Exclude phone numbers (patterns with + prefix or 3+ hyphens/spaces in sequence)
+                if (ctx20.match(/\+\d[\d\s-]{6,}/) || ctx20.match(/\d[\d-]{2,}\d-\d[\d-]{2,}/)) continue;
+                // Exclude ISBN/ISSN (10+ digit sequences with hyphens)
+                if (ctx20.match(/\d{1,5}-\d{1,5}-\d{1,5}/)) continue;
+                // Exclude identifiers (letter immediately before first digit, no space)
+                if (m.index > 0 && /[A-Za-z]/.test(el.text[m.index - 1])) continue;
+
+                findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.92, original: fullMatch, replacement: `${m[1]}\u2013${m[2]}`, rationale: 'Raspon treba en-dash (\u2013), ne crticu.', autoFixable: true }));
             }
 
             // Double hyphen as em-dash
-            const doubleHyphen = /--/g;
-            while ((m = doubleHyphen.exec(el.text)) !== null) {
+            const dh = /--/g;
+            while ((m = dh.exec(el.text)) !== null) {
                 const ctx = getContext(el.text, m.index, 20);
-                findings.push(makeFinding({
-                    element: el, category: 'Tipografija', priority: 'OBAVEZNO',
-                    confidence: 0.90, original: ctx,
-                    replacement: ctx.replace('--', '\u2014'),
-                    rationale: 'Dvostruka crtica (--) treba da bude em-dash (\u2014).',
-                    autoFixable: true,
-                }));
+                findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.90, original: ctx, replacement: ctx.replace('--', '\u2014'), rationale: 'Dvostruka crtica → em-dash (\u2014).', autoFixable: true }));
             }
         }
         return { findings, scannedCount, skippedCount };
     }
 
-
     // ==========================================
-    // CHECK: Bibliography
+    // BIBLIOGRAPHY — continues through subheadings until same/higher level heading
     // ==========================================
     function checkBibliography(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const bibIdx = docMap.elements.findIndex(el =>
+            el.type === 'heading' && el.text.match(/bibliograf|literatura|izvori|references|works cited/i));
+        if (bibIdx === -1) return { findings, scannedCount, skippedCount };
 
-        const bibHeadingIdx = docMap.elements.findIndex(el =>
-            el.type === 'heading' &&
-            el.text.match(/bibliograf|literatura|izvori|references|works cited/i));
-        if (bibHeadingIdx === -1) return { findings, scannedCount, skippedCount };
+        const bibHeading = docMap.elements[bibIdx];
+        const bibLevel = bibHeading.headingLevel || 1;
 
+        // Collect entries: continue through lower-level headings, stop at same/higher
         const bibEntries = [];
-        for (let i = bibHeadingIdx + 1; i < docMap.elements.length; i++) {
+        for (let i = bibIdx + 1; i < docMap.elements.length; i++) {
             const el = docMap.elements[i];
-            if (el.type === 'heading') break;
-            if (el.type === 'paragraph' && el.text.trim().length > 10) {
-                bibEntries.push(el);
+            if (el.type === 'heading') {
+                const hl = el.headingLevel || 1;
+                if (hl <= bibLevel) break; // Same or higher level → stop
+                continue; // Lower level subheading → skip but continue
             }
+            if (el.type === 'paragraph' && el.text.trim().length > 10) bibEntries.push(el);
         }
         scannedCount = bibEntries.length;
         if (bibEntries.length === 0) return { findings, scannedCount, skippedCount };
@@ -769,54 +490,23 @@ const RuleEngine = (() => {
         for (const entry of bibEntries) {
             const text = entry.text.trim();
             if (!text.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/)) {
-                findings.push(makeFinding({
-                    element: entry, category: 'Bibliografija', priority: 'PROVERITI',
-                    confidence: 0.75,
-                    original: text.substring(0, 60) + (text.length > 60 ? '...' : ''),
-                    replacement: '[dodati godinu izdanja]',
-                    rationale: 'Bibliografski zapis bez prepoznatljive godine izdanja.',
-                    requiresSourceVerification: true,
-                }));
+                findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
             }
-            if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) &&
-                !text.match(/\bUniversity\b|\bPress\b|\bVerlag\b|\bizdava/i)) {
-                findings.push(makeFinding({
-                    element: entry, category: 'Bibliografija', priority: 'PROVERITI',
-                    confidence: 0.60,
-                    original: text.substring(0, 60) + (text.length > 60 ? '...' : ''),
-                    replacement: '[proveriti da li nedostaje izdavač/mesto izdanja]',
-                    rationale: 'Moguć nedostatak izdavača ili mesta izdanja.',
-                    requiresSourceVerification: true,
-                }));
+            if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i)) {
+                findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true }));
             }
         }
 
-        // Cross-reference citations
-        const citationPatterns = [
-            /\(([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]+),?\s*(\d{4})\)/g,
-            /([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]+)\s*\((\d{4})\)/g,
-        ];
-        const textElements = docMap.elements.slice(0, bibHeadingIdx);
-        const citedAuthors = new Set();
-        for (const el of textElements) {
+        // Cross-reference
+        const citPats = [/\(([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]+),?\s*\d{4}\)/g, /([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]+)\s*\(\d{4}\)/g];
+        const cited = new Set();
+        for (const el of docMap.elements.slice(0, bibIdx)) {
             if (!el.text) continue;
-            for (const pattern of citationPatterns) {
-                pattern.lastIndex = 0;
-                let m;
-                while ((m = pattern.exec(el.text)) !== null) { citedAuthors.add(m[1]); }
-            }
+            for (const p of citPats) { p.lastIndex = 0; let m2; while ((m2 = p.exec(el.text)) !== null) cited.add(m2[1]); }
         }
-        for (const author of citedAuthors) {
-            const inBib = bibEntries.some(e => e.text.includes(author));
-            if (!inBib) {
-                findings.push(makeFinding({
-                    element: docMap.elements[bibHeadingIdx],
-                    category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70,
-                    original: `Izvor citiran u tekstu: \u201e${author}\u201c`,
-                    replacement: '[dodati u bibliografiju ili proveriti pisanje prezimena]',
-                    rationale: `Autor \u201e${author}\u201c se citira u tekstu ali nije pronađen u bibliografiji.`,
-                    requiresSourceVerification: true,
-                }));
+        for (const author of cited) {
+            if (!bibEntries.some(e => e.text.includes(author))) {
+                findings.push(makeFinding({ element: bibHeading, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true }));
             }
         }
         return { findings, scannedCount, skippedCount };
@@ -824,184 +514,101 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // CHECK: URLs - fixed: don't strip ) if it's part of URL
+    // URLs
     // ==========================================
     function checkUrls(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
-
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
-            scannedCount++;
-            urlRe.lastIndex = 0;
-            let m;
+            scannedCount++; urlRe.lastIndex = 0; let m;
             while ((m = urlRe.exec(el.text)) !== null) {
                 const url = m[0];
-
-                // Count parens in URL to decide if trailing ) is part of it
-                const openParens = (url.match(/\(/g) || []).length;
-                const closeParens = (url.match(/\)/g) || []).length;
-
-                // Only flag trailing punctuation if it's NOT balanced parens
-                // (Wikipedia URLs often have parentheses)
-                let trailingPunct = url.match(/[,.;]+$/);
-                if (trailingPunct) {
-                    const cleanUrl = url.replace(/[,.;]+$/, '');
-                    findings.push(makeFinding({
-                        element: el, category: 'URL', priority: 'PROVERITI',
-                        confidence: 0.80, original: url, replacement: cleanUrl,
-                        rationale: 'URL se završava interpunkcijom koja je verovatno deo rečenice.',
-                    }));
-                } else if (url.match(/\)$/) && closeParens > openParens) {
-                    // Trailing ) is likely sentence punctuation, not part of URL
-                    const cleanUrl = url.replace(/\)$/, '');
-                    findings.push(makeFinding({
-                        element: el, category: 'URL', priority: 'PROVERITI',
-                        confidence: 0.70, original: url, replacement: cleanUrl,
-                        rationale: 'URL se završava zatvorenom zagradom koja verovatno nije deo URL-a.',
-                    }));
-                }
-
-                if (url.length > 100) {
-                    findings.push(makeFinding({
-                        element: el, category: 'URL', priority: 'PREPORUKA',
-                        confidence: 0.65,
-                        original: url.substring(0, 50) + '...',
-                        replacement: '[proveriti da URL nije prelomljen ili odsečen]',
-                        rationale: 'Veoma dugačak URL \u2014 proveriti da je kompletan.',
-                    }));
-                }
+                const openP = (url.match(/\(/g)||[]).length, closeP = (url.match(/\)/g)||[]).length;
+                let trailing = url.match(/[,.;]+$/);
+                if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom.' })); }
+                else if (url.match(/\)$/) && closeP > openP) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.70, original: url, replacement: url.replace(/\)$/, ''), rationale: 'Zatvorena zagrada verovatno nije deo URL-a.' })); }
+                if (url.length > 100) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PREPORUKA', confidence: 0.65, original: url.substring(0,50)+'...', replacement: '[proveriti]', rationale: 'Veoma dugačak URL.' })); }
             }
         }
         return { findings, scannedCount, skippedCount };
     }
 
     // ==========================================
-    // CHECK: Footnotes
+    // FOOTNOTES
     // ==========================================
     function checkFootnotes(docMap) {
         const findings = [];
         const scannedCount = docMap.footnotes.length + docMap.endnotes.length;
-        let skippedCount = 0;
-
-        for (const fn of docMap.footnotes) {
-            if (fn.isEmpty) {
-                findings.push(makeFinding({
-                    element: { id: `fn-${fn.id}`, type: 'footnote', text: '' },
-                    category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99,
-                    original: `[Fusnota ${fn.id} \u2014 prazna]`,
-                    replacement: '[dodati sadržaj ili ukloniti fusnotu]',
-                    rationale: 'Prazna fusnota bez sadržaja.',
-                }));
-            }
-        }
-        for (const en of docMap.endnotes) {
-            if (en.isEmpty) {
-                findings.push(makeFinding({
-                    element: { id: `en-${en.id}`, type: 'endnote', text: '' },
-                    category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99,
-                    original: `[Endnota ${en.id} \u2014 prazna]`,
-                    replacement: '[dodati sadržaj ili ukloniti endnotu]',
-                    rationale: 'Prazna endnota bez sadržaja.',
-                }));
-            }
-        }
-        return { findings, scannedCount, skippedCount };
+        for (const fn of docMap.footnotes) { if (fn.isEmpty) findings.push(makeFinding({ element: { id: `fn-${fn.id}`, type: 'footnote', text: '', section: '(fusnote)', isDirectQuote: false }, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[Fusnota ${fn.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: 'Prazna fusnota.' })); }
+        for (const en of docMap.endnotes) { if (en.isEmpty) findings.push(makeFinding({ element: { id: `en-${en.id}`, type: 'endnote', text: '', section: '(endnote)', isDirectQuote: false }, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[Endnota ${en.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: 'Prazna endnota.' })); }
+        return { findings, scannedCount, skippedCount: 0 };
     }
 
-
     // ==========================================
-    // CHECK: Repeated paragraphs
+    // REPEATED PARAGRAPHS
     // ==========================================
     function checkRepetition(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         const seen = new Map();
-
         for (const el of docMap.elements) {
-            if (!el.text || el.text.trim().length < 50) { skippedCount++; continue; }
-            if (el.type === 'heading') { skippedCount++; continue; }
+            if (!el.text || el.text.trim().length < 50 || el.type === 'heading') { skippedCount++; continue; }
             scannedCount++;
-            const normalized = el.text.trim().replace(/\s+/g, ' ').toLowerCase();
-            if (seen.has(normalized)) {
-                const firstEl = seen.get(normalized);
-                findings.push(makeFinding({
-                    element: el, category: 'Ponavljanje', priority: 'OBAVEZNO',
-                    confidence: 0.98,
-                    original: el.text.substring(0, 80) + '...',
-                    replacement: '[ukloniti ponovljeni pasus]',
-                    rationale: `Identičan pasus se pojavljuje ranije u dokumentu (${firstEl.id}).`,
-                }));
-            } else { seen.set(normalized, el); }
+            const norm = el.text.trim().replace(/\s+/g,' ').toLowerCase();
+            if (seen.has(norm)) { findings.push(makeFinding({ element: el, category: 'Ponavljanje', priority: 'OBAVEZNO', confidence: 0.98, original: el.text.substring(0,80)+'...', replacement: '[ukloniti]', rationale: `Ponovljen pasus (${seen.get(norm).id}).` })); }
+            else seen.set(norm, el);
         }
         return { findings, scannedCount, skippedCount };
     }
 
+
     // ==========================================
-    // CHECK: ALL-CAPS words in body text
+    // ALL-CAPS — Unicode tokenization (no \b for Cyrillic)
     // ==========================================
     function checkAllCaps(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-        const knownAbbr = new Set([
-            'UNESCO', 'NATO', 'EU', 'SAD', 'SSSR', 'DNA', 'RNA', 'URL', 'HTML',
-            'CSS', 'JS', 'PDF', 'DOCX', 'ISBN', 'ISSN', 'DOI', 'NB', 'PS', 'AD',
-            'BC', 'PhD', 'USA', 'UK', 'ID', 'OK', 'IT', 'PR', 'HR', 'TV', 'CD',
-            'DVD', 'USB', 'PC', 'OS', 'AI',
-        ]);
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
+        const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI']);
         for (const el of docMap.elements) {
             if (!el.text || el.type === 'heading') { skippedCount++; continue; }
             scannedCount++;
-            const words = el.text.match(/\b[A-Z\u0410-\u042F]{3,}\b/g) || [];
+            // Unicode tokenization: split on non-letter characters
+            const words = el.text.match(/[\p{L}\p{M}]+/gu) || [];
             for (const word of words) {
-                if (knownAbbr.has(word)) continue;
-                if (word.match(/^[IVXLCDM]+$/)) continue;
-                findings.push(makeFinding({
-                    element: el, category: 'Tipografija', priority: 'PREPORUKA',
-                    confidence: 0.70, original: word,
-                    replacement: '[proveriti da li ALL-CAPS treba da stoji ili treba normalizovati]',
-                    rationale: `Reč \u201e${word}\u201c je napisana svim velikim slovima u telu teksta.`,
-                }));
+                if (word.length < 3) continue;
+                // Check if ALL characters are uppercase (works for both Latin and Cyrillic)
+                if (word === word.toUpperCase() && word !== word.toLowerCase()) {
+                    if (known.has(word)) continue;
+                    if (/^[IVXLCDM]+$/.test(word)) continue; // Roman numerals
+                    findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.` }));
+                }
             }
         }
         return { findings, scannedCount, skippedCount };
     }
 
     // ==========================================
-    // CHECK: Empty headings
+    // EMPTY HEADINGS — allow H1→H2, H2→H3 (normal nesting)
     // ==========================================
     function checkEmptyHeadings(docMap) {
-        const findings = [];
-        let scannedCount = 0;
-        let skippedCount = 0;
-
+        const findings = []; let scannedCount = 0, skippedCount = 0;
         for (let i = 0; i < docMap.elements.length; i++) {
             const el = docMap.elements[i];
             if (el.type !== 'heading') { skippedCount++; continue; }
             scannedCount++;
-
-            if (!el.text || el.text.trim().length === 0) {
-                findings.push(makeFinding({
-                    element: el, category: 'Struktura', priority: 'OBAVEZNO',
-                    confidence: 0.99,
-                    original: `[Prazan naslov nivoa ${el.headingLevel}]`,
-                    replacement: '[dodati tekst naslova ili ukloniti prazan naslov]',
-                    rationale: 'Naslov bez sadržaja \u2014 moguć artefakt formatiranja.',
-                }));
+            if (!el.text || !el.text.trim()) {
+                findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'OBAVEZNO', confidence: 0.99, original: `[Prazan naslov nivoa ${el.headingLevel}]`, replacement: '[dodati tekst]', rationale: 'Naslov bez sadržaja.' }));
             }
-
-            if (i < docMap.elements.length - 1 && docMap.elements[i + 1].type === 'heading') {
-                findings.push(makeFinding({
-                    element: el, category: 'Struktura', priority: 'PREPORUKA',
-                    confidence: 0.75, original: el.text || '[prazan]',
-                    replacement: '[dodati sadržaj ispod naslova ili ukloniti naslov]',
-                    rationale: 'Naslov odmah praćen sledećim naslovom bez sadržaja između.',
-                }));
+            // Check heading followed by another heading — only report if same or HIGHER level (not normal nesting)
+            if (i < docMap.elements.length - 1) {
+                const next = docMap.elements[i + 1];
+                if (next.type === 'heading') {
+                    const currLvl = el.headingLevel || 1;
+                    const nextLvl = next.headingLevel || 1;
+                    // H1→H2 is fine (nesting). H2→H1 or H2→H2 without content is suspect.
+                    if (nextLvl <= currLvl) {
+                        findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'PREPORUKA', confidence: 0.75, original: el.text || '[prazan]', replacement: '[dodati sadržaj ispod]', rationale: 'Naslov bez sadržaja pre naslova istog/višeg nivoa.' }));
+                    }
+                }
             }
         }
         return { findings, scannedCount, skippedCount };
@@ -1009,79 +616,46 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // HELPER: Create a finding object
-    // Supports optional table cell metadata (tableId, rowId, cellId, rowIndex, columnIndex)
+    // HELPERS
     // ==========================================
     function makeFinding({ element, category, priority, confidence, original,
         replacement, rationale, autoFixable = false, globalPattern = false,
         requiresSourceVerification = false,
         tableId = null, rowId = null, cellId = null, rowIndex = null, columnIndex = null }) {
         return {
-            id: nextId(),
-            section: getSectionName(element),
-            paragraphId: element.id || null,
-            category,
-            priority,
-            confidence,
-            original,
-            replacement,
-            rationale,
+            id: nextId(), section: getSectionName(element), paragraphId: element.id || null,
+            category, priority, confidence, original, replacement, rationale,
             isDirectQuote: element.isDirectQuote || false,
-            requiresSourceVerification,
-            autoFixable,
-            globalPattern,
-            status: 'OPEN',
-            // Table cell metadata (null for non-table findings)
-            tableId,
-            rowId,
-            cellId,
-            rowIndex,
-            columnIndex,
-            _element: element, // Internal ref, removed in runAudit before output
+            requiresSourceVerification, autoFixable, globalPattern, status: 'OPEN',
+            tableId, rowId, cellId, rowIndex, columnIndex,
+            _element: element,
         };
     }
 
-    function getSectionName(element) {
-        if (element.type === 'heading') return element.text || '(bez naslova)';
-        if (element.section) return element.section;
-        return element.id || '(nepoznata lokacija)';
+    function getSectionName(el) {
+        if (el.type === 'heading') return el.text || '(bez naslova)';
+        if (el.section) return el.section;
+        return el.id || '(nepoznata lokacija)';
     }
 
     function getContext(text, pos, radius) {
-        const start = Math.max(0, pos - radius);
-        const end = Math.min(text.length, pos + radius);
-        let ctx = text.substring(start, end);
-        if (start > 0) ctx = '...' + ctx;
-        if (end < text.length) ctx = ctx + '...';
+        const s = Math.max(0, pos - radius), e = Math.min(text.length, pos + radius);
+        let ctx = text.substring(s, e);
+        if (s > 0) ctx = '...' + ctx;
+        if (e < text.length) ctx += '...';
         return ctx;
     }
 
     function levenshteinDistance(a, b) {
-        if (a.length === 0) return b.length;
-        if (b.length === 0) return a.length;
-        const matrix = [];
-        for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-        for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-        for (let i = 1; i <= b.length; i++) {
-            for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                    matrix[i][j] = matrix[i - 1][j - 1];
-                } else {
-                    matrix[i][j] = Math.min(
-                        matrix[i - 1][j - 1] + 1,
-                        matrix[i][j - 1] + 1,
-                        matrix[i - 1][j] + 1);
-                }
-            }
-        }
-        return matrix[b.length][a.length];
+        if (!a.length) return b.length; if (!b.length) return a.length;
+        const mx = []; for (let i = 0; i <= b.length; i++) mx[i] = [i];
+        for (let j = 0; j <= a.length; j++) mx[0][j] = j;
+        for (let i = 1; i <= b.length; i++) for (let j = 1; j <= a.length; j++)
+            mx[i][j] = b[i-1]===a[j-1] ? mx[i-1][j-1] : Math.min(mx[i-1][j-1]+1, mx[i][j-1]+1, mx[i-1][j]+1);
+        return mx[b.length][a.length];
     }
 
-    // Public API
     return { runAudit };
 })();
 
-// Node.js module export for testing
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = RuleEngine;
-}
+if (typeof module !== 'undefined' && module.exports) { module.exports = RuleEngine; }

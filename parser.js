@@ -1,21 +1,26 @@
 /**
- * Document Parser Module
- * Handles .docx (OOXML via JSZip), .md, and .txt files
- * Extracts structured document map with hashed IDs
+ * Document Parser Module — Round 4
+ * Full OOXML parsing with tracked changes, basedOn chain, lvlRestart, multilevel labels
  */
 
 const DocumentParser = (() => {
     'use strict';
 
-    // Safety limits
     const MAX_ZIP_FILES = 500;
-    const MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024; // 100MB
-    const MAX_SINGLE_XML_SIZE = 50 * 1024 * 1024; // 50MB
+    const MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024;
+    const MAX_SINGLE_XML_SIZE = 50 * 1024 * 1024;
 
-    async function parse(file) {
+    // Tracked changes mode: 'accept' | 'show_deleted' | 'ignore_deleted'
+    let trackedChangesMode = 'accept';
+
+    function setTrackedChangesMode(mode) {
+        trackedChangesMode = mode;
+    }
+
+    async function parse(file, options = {}) {
+        if (options.trackedChanges) trackedChangesMode = options.trackedChanges;
         const ext = file.name.split('.').pop().toLowerCase();
         const arrayBuffer = await file.arrayBuffer();
-
         let docMap;
         switch (ext) {
             case 'docx': docMap = await parseDocx(arrayBuffer, file.name); break;
@@ -23,18 +28,15 @@ const DocumentParser = (() => {
             case 'txt': case 'text': docMap = await parsePlainText(arrayBuffer, file.name); break;
             default: throw new Error(`Nepodržan format: .${ext}`);
         }
-
         assignHashedIds(docMap);
         detectDirectQuotes(docMap);
         return docMap;
     }
 
 
-    /**
-     * Helper: safely load and size-check an XML file from zip.
-     * Measures byte length (not string length) for size enforcement.
-     */
-
+    // ==========================================
+    // DOCX PARSING
+    // ==========================================
     async function parseDocx(arrayBuffer, fileName) {
         let zip;
         try { zip = await JSZip.loadAsync(arrayBuffer); }
@@ -45,58 +47,96 @@ const DocumentParser = (() => {
             throw new Error(`ZIP sadrži ${fileCount} fajlova (limit: ${MAX_ZIP_FILES}).`);
         }
 
-        // Track actual decompressed size by loading each entry
-        let totalDecompressedSize = 0;
+        // Reject dangerous content
+        if (zip.file('word/vbaProject.bin')) {
+            throw new Error('Dokument sadrži VBA makroe (word/vbaProject.bin). Odbijeno.');
+        }
+        for (const path of Object.keys(zip.files)) {
+            if (path.startsWith('word/embeddings/')) {
+                throw new Error(`Dokument sadrži ugrađene objekte (${path}). Odbijeno.`);
+            }
+        }
 
-        // Override safeLoadXml locally to track cumulative size
-        async function loadXml(path) {
+        // Track total decompressed size across ALL entries (images, media, etc.)
+        let totalDecompressed = 0;
+
+        async function loadEntry(path) {
             const file = zip.file(path);
             if (!file) return null;
             const bytes = await file.async('uint8array');
-            if (bytes.length > MAX_SINGLE_XML_SIZE) {
-                throw new Error(`${path} prelazi dozvoljenu veličinu (${bytes.length} > ${MAX_SINGLE_XML_SIZE} bajtova).`);
+            totalDecompressed += bytes.length;
+            if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
+                throw new Error(`Ukupna raspakovanja veličina prelazi ${MAX_UNCOMPRESSED_SIZE} bajtova.`);
             }
-            totalDecompressedSize += bytes.length;
-            if (totalDecompressedSize > MAX_UNCOMPRESSED_SIZE) {
-                throw new Error('Ukupna nekompresovana veličina prelazi limit.');
+            if (bytes.length > MAX_SINGLE_XML_SIZE) {
+                throw new Error(`${path} prelazi ${MAX_SINGLE_XML_SIZE} bajtova.`);
             }
             return new TextDecoder('utf-8').decode(bytes);
         }
 
-        const contentTypesXml = await loadXml('[Content_Types].xml');
+        // Also count non-XML entries toward total size
+        for (const [path, entry] of Object.entries(zip.files)) {
+            if (entry.dir) continue;
+            if (path.endsWith('.xml') || path.endsWith('.rels')) continue; // counted when loaded
+            // For binary entries (images, etc), get size
+            try {
+                const bytes = await entry.async('uint8array');
+                totalDecompressed += bytes.length;
+                if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
+                    throw new Error(`Ukupna raspakovanja veličina prelazi limit (binarne datoteke).`);
+                }
+            } catch (e) {
+                if (e.message.includes('prelazi')) throw e;
+            }
+        }
+
+        const contentTypesXml = await loadEntry('[Content_Types].xml');
         if (!contentTypesXml) throw new Error('Fajl nema validnu OOXML strukturu.');
-        if (contentTypesXml.includes('vbaProject') || contentTypesXml.includes('.docm')) {
+        if (contentTypesXml.includes('vbaProject')) {
             throw new Error('Makro-omogućeni dokumenti nisu podržani.');
         }
 
-        const docContent = await loadXml('word/document.xml');
+
+        function parseXmlStrict(content, filename) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(content, 'application/xml');
+            if (doc.getElementsByTagName('parsererror').length) {
+                throw new Error(`Neispravan XML: ${filename}`);
+            }
+            return doc;
+        }
+
+        const docContent = await loadEntry('word/document.xml');
         if (!docContent) throw new Error('word/document.xml nije pronađen.');
 
-        const stylesContent = await loadXml('word/styles.xml');
-        const styles = stylesContent ? parseStyles(stylesContent) : {};
+        const stylesContent = await loadEntry('word/styles.xml');
+        const styles = stylesContent ? parseStyles(stylesContent, 'word/styles.xml', parseXmlStrict) : { _numFromStyle: {}, _basedOn: {} };
 
-        const numberingContent = await loadXml('word/numbering.xml');
-        const numbering = numberingContent ? parseNumbering(numberingContent) : {};
+        const numberingContent = await loadEntry('word/numbering.xml');
+        const numbering = numberingContent ? parseNumbering(numberingContent, 'word/numbering.xml', parseXmlStrict) : {};
 
-        const fnContent = await loadXml('word/footnotes.xml');
-        const footnotes = fnContent ? parseFootnotes(fnContent) : [];
+        const fnContent = await loadEntry('word/footnotes.xml');
+        const footnotes = fnContent ? parseFootnotes(fnContent, 'word/footnotes.xml', parseXmlStrict) : [];
 
-        const enContent = await loadXml('word/endnotes.xml');
-        const endnotes = enContent ? parseEndnotes(enContent) : [];
+        const enContent = await loadEntry('word/endnotes.xml');
+        const endnotes = enContent ? parseEndnotes(enContent, 'word/endnotes.xml', parseXmlStrict) : [];
 
         let headers = [], footers = [];
-        for (const [path, file] of Object.entries(zip.files)) {
+        for (const path of Object.keys(zip.files)) {
             if (path.match(/^word\/header\d+\.xml$/)) {
-                const c = await loadXml(path);
-                if (c) headers.push({ path, text: extractTextFromXml(c) });
+                const c = await loadEntry(path);
+                if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
             if (path.match(/^word\/footer\d+\.xml$/)) {
-                const c = await loadXml(path);
-                if (c) footers.push({ path, text: extractTextFromXml(c) });
+                const c = await loadEntry(path);
+                if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
         }
 
-        const elements = parseDocumentXml(docContent, styles, numbering);
+        // Resolve basedOn chain for numbering inheritance
+        resolveBasedOnNumbering(styles);
+
+        const elements = parseDocumentXml(docContent, styles, numbering, parseXmlStrict);
 
         let htmlPreview = '';
         try { const r = await mammoth.convertToHtml({ arrayBuffer }); htmlPreview = r.value; }
@@ -114,81 +154,74 @@ const DocumentParser = (() => {
     }
 
 
-    function parseDocumentXml(xmlStr, styles, numbering) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
-        if (doc.getElementsByTagName('parsererror').length) {
-            throw new Error('Neispravan OOXML sadržaj.');
-        }
-
+    // ==========================================
+    // DOCUMENT XML PARSING
+    // ==========================================
+    function parseDocumentXml(xmlStr, styles, numbering, parseXmlStrict) {
+        const doc = parseXmlStrict(xmlStr, 'word/document.xml');
         const elements = [];
         const ns = {
             w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
             w14: 'http://schemas.microsoft.com/office/word/2010/wordml',
         };
-
         const body = doc.getElementsByTagNameNS(ns.w, 'body')[0];
         if (!body) return elements;
 
         let paragraphIndex = 0, tableIndex = 0;
-        const listInstances = {};
-        let lastWasNumbered = false;
+        const listState = { instances: {}, seq: 0 };
 
-        // Only iterate direct children of body
         for (const child of body.children) {
             const ln = child.localName;
             if (ln === 'p') {
-                const el = parseParagraph(child, ns, styles, numbering,
-                    paragraphIndex, listInstances, lastWasNumbered, elements);
+                const el = parseParagraph(child, ns, styles, numbering, paragraphIndex, listState, elements);
                 elements.push(el);
-                lastWasNumbered = !!el.numId;
                 paragraphIndex++;
             } else if (ln === 'tbl') {
-                const el = parseTable(child, ns, tableIndex);
-                elements.push(el);
-                lastWasNumbered = false;
+                elements.push(parseTable(child, ns, tableIndex));
+                resetListState(listState);
                 tableIndex++;
             } else if (ln === 'sectPr') {
-                // Section break resets list instances
-                for (const k of Object.keys(listInstances)) delete listInstances[k];
-                lastWasNumbered = false;
+                resetListState(listState);
             }
         }
         return elements;
     }
 
+    function resetListState(listState) {
+        listState.instances = {};
+        listState.seq++;
+    }
 
-    function parseParagraph(pNode, ns, styles, numbering, index, listInstances, lastWasNumbered, prevElements) {
+
+    // ==========================================
+    // PARAGRAPH PARSING
+    // ==========================================
+    function parseParagraph(pNode, ns, styles, numbering, index, listState, prevElements) {
         const runs = [];
         let fullText = '';
-
-        // Try to get w14:paraId
         const paraId = pNode.getAttributeNS(ns.w14, 'paraId') ||
             pNode.getAttribute('w14:paraId') || null;
 
-        const pPr = pNode.getElementsByTagNameNS(ns.w, 'pPr')[0];
+        const pPr = getDirectChild(pNode, ns.w, 'pPr');
         let styleName = 'Normal';
         let outlineLevel = -1;
         let numId = null;
         let numLevel = null;
 
         if (pPr) {
-            const pStyle = pPr.getElementsByTagNameNS(ns.w, 'pStyle')[0];
+            const pStyle = getDirectChild(pPr, ns.w, 'pStyle');
             if (pStyle) styleName = pStyle.getAttribute('w:val') || 'Normal';
-
-            const outlineLvl = pPr.getElementsByTagNameNS(ns.w, 'outlineLvl')[0];
+            const outlineLvl = getDirectChild(pPr, ns.w, 'outlineLvl');
             if (outlineLvl) outlineLevel = parseInt(outlineLvl.getAttribute('w:val'), 10);
-
-            const numPr = pPr.getElementsByTagNameNS(ns.w, 'numPr')[0];
+            const numPr = getDirectChild(pPr, ns.w, 'numPr');
             if (numPr) {
-                const ilvl = numPr.getElementsByTagNameNS(ns.w, 'ilvl')[0];
-                const nId = numPr.getElementsByTagNameNS(ns.w, 'numId')[0];
+                const ilvl = getDirectChild(numPr, ns.w, 'ilvl');
+                const nId = getDirectChild(numPr, ns.w, 'numId');
                 if (ilvl) numLevel = parseInt(ilvl.getAttribute('w:val'), 10);
                 if (nId) numId = nId.getAttribute('w:val');
             }
-
-            // Inherit numbering from style if not explicitly set
-            if (!numId && styles && styles._numFromStyle && styles._numFromStyle[styleName]) {
+            // Inherit numbering from style (including basedOn chain)
+            if (!numId && styles._numFromStyle && styles._numFromStyle[styleName]) {
                 const inherited = styles._numFromStyle[styleName];
                 numId = inherited.numId;
                 numLevel = inherited.ilvl ?? 0;
@@ -203,23 +236,13 @@ const DocumentParser = (() => {
             headingLevel = match ? parseInt(match[1], 10) : (outlineLevel + 1);
         }
 
-        for (const child of pNode.children) {
-            if (child.localName === 'r') {
-                const runText = extractRunText(child, ns);
-                const runProps = extractRunProps(child, ns);
-                if (runText) { runs.push({ text: runText, ...runProps }); fullText += runText; }
-            } else if (child.localName === 'hyperlink') {
-                for (const hc of child.children) {
-                    if (hc.localName === 'r') {
-                        const rt = extractRunText(hc, ns);
-                        if (rt) { runs.push({ text: rt, isHyperlink: true }); fullText += rt; }
-                    }
-                }
-            }
-        }
+        // Extract text recursively (handles ins/del/sdt/smartTag/fldSimple/customXml)
+        fullText = extractVisibleText(pNode, ns);
+        // Build runs for formatting info
+        buildRuns(pNode, ns, runs);
 
 
-        // Calculate displayed number from OOXML numbering data
+        // ---- NUMBERING LOGIC ----
         let displayedNumber = null;
         let displayedLabel = null;
         let listInstanceId = null;
@@ -229,106 +252,94 @@ const DocumentParser = (() => {
         if (numId && numbering && numbering.nums && numbering.nums[numId]) {
             const numDef = numbering.nums[numId];
             const abstractId = numDef.abstractNumId;
-            const abstractDef = numbering.abstractNums
-                ? numbering.abstractNums[abstractId] : null;
+            const abstractDef = numbering.abstractNums ? numbering.abstractNums[abstractId] : null;
             const level = numLevel ?? 0;
 
             if (abstractDef && abstractDef.levels && abstractDef.levels[level]) {
-                const lvlDef = abstractDef.levels[level];
-                numFmt = lvlDef.numFmt || 'decimal';
+                let lvlDef = abstractDef.levels[level];
 
-                // Exclude bullet and none formats from numeric tracking
-                if (numFmt === 'bullet' || numFmt === 'none') {
-                    // Still record numId but no displayed number
-                    const type = isHeading ? 'heading' : 'paragraph';
-                    return {
-                        type, index, paraId, style: styleName, text: fullText, runs,
-                        headingLevel: isHeading ? headingLevel : null,
-                        numId, numLevel, displayedNumber: null, displayedLabel: null,
-                        listInstanceId: null, listStart: null, numFmt,
-                        isEmpty: fullText.trim().length === 0,
-                        isDirectQuote: false, quoteConfidence: 0,
-                    };
-                }
-
-                // Apply lvlOverride/startOverride
-                let effectiveStart = lvlDef.start ?? 1;
+                // Apply full lvlOverride (may replace entire level definition)
                 if (numDef.lvlOverrides && numDef.lvlOverrides[level]) {
                     const ov = numDef.lvlOverrides[level];
-                    if (ov.startOverride != null) effectiveStart = ov.startOverride;
+                    if (ov.lvlDef) lvlDef = { ...lvlDef, ...ov.lvlDef };
+                    if (ov.startOverride != null) lvlDef = { ...lvlDef, start: ov.startOverride };
                 }
+
+                numFmt = lvlDef.numFmt || 'decimal';
+
+                // Exclude bullet/none from numeric tracking
+                if (numFmt === 'bullet' || numFmt === 'none') {
+                    return buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
+                        headingLevel, numId, numLevel, null, null, null, null, numFmt);
+                }
+
+                const effectiveStart = lvlDef.start ?? 1;
                 listStart = effectiveStart;
 
-                // Determine if this is a new list instance
-                // Multilevel key tracks all levels for this numId
-                const multiKey = `${numId}`;
+                // Determine list instance lifecycle
+                const prevEl = prevElements.length > 0 ? prevElements[prevElements.length - 1] : null;
+                const prevWasSameNum = prevEl && prevEl.numId === numId;
+                const interrupted = !prevWasSameNum && prevEl &&
+                    (prevEl.type === 'heading' || prevEl.type === 'table' ||
+                     (prevEl.type === 'paragraph' && !prevEl.numId));
 
-                // Initialize per-numId level counters if not present
-                if (!listInstances[multiKey]) {
-                    listInstances[multiKey] = {
-                        counters: {},  // level → current count
-                        instanceSeq: 0, // increments on each restart
+                // New instance when: first occurrence, interrupted, or numId reappears after different list
+                const instanceKey = numId;
+                if (!listState.instances[instanceKey] || interrupted) {
+                    listState.seq++;
+                    listState.instances[instanceKey] = {
+                        counters: {},
+                        seq: listState.seq,
                         lastLevel: -1,
                     };
                 }
-                const inst = listInstances[multiKey];
+                const inst = listState.instances[instanceKey];
 
-                // Determine restart conditions
-                const prevEl = prevElements.length > 0 ? prevElements[prevElements.length - 1] : null;
-                const prevWasSameNum = prevEl && prevEl.numId === numId;
-
-                // New list instance if: no previous item in this numId, or interrupted by non-list content
-                if (!prevWasSameNum && !lastWasNumbered) {
-                    // Reset ALL level counters — this is a brand new list
-                    inst.counters = {};
-                    inst.instanceSeq++;
-                }
-
-                // If higher level incremented, reset lower levels (lvlRestart logic)
-                if (level < inst.lastLevel) {
-                    // We went UP a level — don't reset, this is valid
-                } else if (level > inst.lastLevel && inst.lastLevel >= 0) {
-                    // We went DOWN — this is a sub-level, initialize it
-                    // Reset only if first time at this sub-level in this sequence
-                    if (inst.counters[level] === undefined) {
-                        inst.counters[level] = effectiveStart - 1;
-                    }
-                }
-
-                // Initialize counter for this level if needed
-                if (inst.counters[level] === undefined) {
-                    inst.counters[level] = effectiveStart - 1;
-                }
-
-                // Increment the current level
-                inst.counters[level]++;
-                inst.lastLevel = level;
-
-                // If this level has lvlRestart pointing to a higher level,
-                // and that higher level just incremented, reset this level
-                // (handled by the higher-resets-lower logic above)
-                // Reset lower levels when a higher level advances
-                if (prevWasSameNum && prevEl.numLevel != null && prevEl.numLevel > level) {
-                    // Higher level (lower number) advanced — reset all levels below
-                    for (const k of Object.keys(inst.counters)) {
-                        if (parseInt(k) > level) {
-                            delete inst.counters[k];
+                // lvlRestart: when a HIGHER level (lower number) advances, reset this level
+                if (prevWasSameNum && prevEl.numLevel != null && prevEl.numLevel < level) {
+                    // Higher level advanced → reset current and all lower
+                    for (let l = level; l <= 9; l++) {
+                        if (inst.counters[l] !== undefined) {
+                            const lvlDefL = abstractDef.levels[l];
+                            inst.counters[l] = (lvlDefL ? (lvlDefL.start ?? 1) : 1) - 1;
                         }
                     }
                 }
 
-                displayedNumber = inst.counters[level];
-                listInstanceId = `${numId}-${inst.instanceSeq}-${level}`;
+                // Initialize counter if needed
+                if (inst.counters[level] === undefined) {
+                    inst.counters[level] = effectiveStart - 1;
+                }
+                inst.counters[level]++;
+                inst.lastLevel = level;
 
-                // Format displayedLabel using numFmt and lvlText
-                displayedLabel = formatNumber(displayedNumber, numFmt, lvlDef.lvlText, level);
+                displayedNumber = inst.counters[level];
+                listInstanceId = `${numId}-${inst.seq}-${level}`;
+
+                // Format label using all level counters
+                displayedLabel = formatLabel(lvlDef.lvlText || `%${level+1}.`, inst.counters, abstractDef.levels);
             }
         }
 
-        const type = isHeading ? 'heading' : 'paragraph';
+        // If heading or non-numbered paragraph, reset list state
+        if (!numId && (isHeading || !fullText.trim())) {
+            resetListState(listState);
+        } else if (!numId) {
+            // Plain paragraph interrupts lists
+            listState.instances = {};
+        }
 
+        return buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
+            headingLevel, numId, numLevel, displayedNumber, displayedLabel,
+            listInstanceId, listStart, numFmt);
+    }
+
+    function buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
+        headingLevel, numId, numLevel, displayedNumber, displayedLabel,
+        listInstanceId, listStart, numFmt) {
         return {
-            type, index, paraId, style: styleName, text: fullText, runs,
+            type: isHeading ? 'heading' : 'paragraph',
+            index, paraId, style: styleName, text: fullText, runs,
             headingLevel: isHeading ? headingLevel : null,
             numId, numLevel, displayedNumber, displayedLabel,
             listInstanceId, listStart, numFmt,
@@ -337,124 +348,138 @@ const DocumentParser = (() => {
         };
     }
 
-    /**
-     * Format a number according to numFmt and lvlText template.
-     */
-    function formatNumber(num, numFmt, lvlText, level) {
-        let formatted;
-        switch (numFmt) {
-            case 'decimal': formatted = String(num); break;
-            case 'lowerLetter': formatted = String.fromCharCode(96 + ((num - 1) % 26) + 1); break;
-            case 'upperLetter': formatted = String.fromCharCode(64 + ((num - 1) % 26) + 1); break;
-            case 'lowerRoman': formatted = toRoman(num).toLowerCase(); break;
-            case 'upperRoman': formatted = toRoman(num); break;
-            default: formatted = String(num);
-        }
-        // Replace %N placeholder in lvlText (e.g., "%1." → "1.")
-        let label = lvlText || `%${level + 1}.`;
-        label = label.replace(`%${level + 1}`, formatted);
-        return label;
-    }
 
-    function toRoman(num) {
-        const vals = [1000,900,500,400,100,90,50,40,10,9,5,4,1];
-        const syms = ['M','CM','D','CD','C','XC','L','XL','X','IX','V','IV','I'];
-        let result = '';
-        for (let i = 0; i < vals.length; i++) {
-            while (num >= vals[i]) { result += syms[i]; num -= vals[i]; }
-        }
-        return result;
-    }
-
-
-    function extractRunText(rNode, ns) {
+    // ==========================================
+    // RECURSIVE VISIBLE TEXT EXTRACTION
+    // Handles: w:r, w:hyperlink, w:ins, w:del, w:sdt, w:smartTag, w:fldSimple, w:customXml
+    // ==========================================
+    function extractVisibleText(node, ns) {
         let text = '';
-        for (const child of rNode.children) {
-            if (child.localName === 't') text += child.textContent;
-            else if (child.localName === 'tab') text += '\t';
-            else if (child.localName === 'br') text += '\n';
-            else if (child.localName === 'sym') text += '\u25A1';
+        for (const child of node.children) {
+            const ln = child.localName;
+            if (ln === 'r') {
+                text += extractRunTextFromNode(child, ns);
+            } else if (ln === 'hyperlink' || ln === 'smartTag' || ln === 'customXml' || ln === 'fldSimple') {
+                text += extractVisibleText(child, ns);
+            } else if (ln === 'sdt') {
+                // Extract from sdtContent
+                const sdtContent = getDirectChild(child, ns.w, 'sdtContent');
+                if (sdtContent) text += extractVisibleText(sdtContent, ns);
+            } else if (ln === 'ins') {
+                // Tracked change: insertion — always include
+                text += extractVisibleText(child, ns);
+            } else if (ln === 'del') {
+                // Tracked change: deletion
+                if (trackedChangesMode === 'show_deleted') {
+                    text += extractVisibleText(child, ns);
+                }
+                // 'accept' and 'ignore_deleted' both skip deleted text
+            } else if (ln === 'pPr' || ln === 'rPr' || ln === 'sectPr' || ln === 'bookmarkStart' || ln === 'bookmarkEnd') {
+                // Skip non-text elements
+            } else if (child.children && child.children.length > 0) {
+                // Recurse into unknown containers
+                text += extractVisibleText(child, ns);
+            }
         }
         return text;
     }
 
-    function extractRunProps(rNode, ns) {
-        const rPr = rNode.getElementsByTagNameNS(ns.w, 'rPr')[0];
-        if (!rPr) return {};
-        const props = {};
-        if (rPr.getElementsByTagNameNS(ns.w, 'b')[0]) props.bold = true;
-        if (rPr.getElementsByTagNameNS(ns.w, 'i')[0]) props.italic = true;
-        if (rPr.getElementsByTagNameNS(ns.w, 'u')[0]) props.underline = true;
-        const lang = rPr.getElementsByTagNameNS(ns.w, 'lang')[0];
-        if (lang) props.lang = lang.getAttribute('w:val') || lang.getAttribute('w:bidi');
-        return props;
+    function extractRunTextFromNode(rNode, ns) {
+        let text = '';
+        for (const child of rNode.children) {
+            const ln = child.localName;
+            if (ln === 't') text += child.textContent;
+            else if (ln === 'tab') text += '\t';
+            else if (ln === 'br') text += '\n';
+            else if (ln === 'sym') text += '\u25A1';
+            else if (ln === 'delText') {
+                if (trackedChangesMode === 'show_deleted') text += child.textContent;
+            }
+        }
+        return text;
+    }
+
+    function buildRuns(node, ns, runs) {
+        for (const child of node.children) {
+            const ln = child.localName;
+            if (ln === 'r') {
+                const text = extractRunTextFromNode(child, ns);
+                if (text) {
+                    const rPr = getDirectChild(child, ns.w, 'rPr');
+                    const props = {};
+                    if (rPr) {
+                        if (getDirectChild(rPr, ns.w, 'b')) props.bold = true;
+                        if (getDirectChild(rPr, ns.w, 'i')) props.italic = true;
+                        if (getDirectChild(rPr, ns.w, 'u')) props.underline = true;
+                    }
+                    runs.push({ text, ...props });
+                }
+            } else if (ln === 'hyperlink' || ln === 'ins' || ln === 'smartTag' ||
+                       ln === 'customXml' || ln === 'fldSimple' || ln === 'sdt') {
+                const target = ln === 'sdt' ? (getDirectChild(child, ns.w, 'sdtContent') || child) : child;
+                buildRuns(target, ns, runs);
+            } else if (ln === 'del') {
+                if (trackedChangesMode === 'show_deleted') buildRuns(child, ns, runs);
+            }
+        }
+    }
+
+    function getDirectChild(parent, nsUri, localName) {
+        for (const child of parent.children) {
+            if (child.localName === localName &&
+                (!nsUri || child.namespaceURI === nsUri)) return child;
+        }
+        return null;
     }
 
 
-    /**
-     * Parse table: only direct child rows/cells (not nested tables).
-     * Checks w:tblHeader for actual header detection.
-     */
+    // ==========================================
+    // TABLE PARSING — hashed IDs without indices/substrings
+    // ==========================================
     function parseTable(tblNode, ns, tableIdx) {
         const rows = [];
         let hasActualHeader = false;
-        let rowIndex = 0;
-
-        // Collect all cell text for table hash
-        let tableTextForHash = '';
+        let allCellTexts = [];
 
         for (const child of tblNode.children) {
             if (child.localName !== 'tr') continue;
-            const tr = child;
-
-            const trPr = tr.getElementsByTagNameNS(ns.w, 'trPr')[0];
-            if (trPr) {
-                const tblHeader = trPr.getElementsByTagNameNS(ns.w, 'tblHeader')[0];
-                if (tblHeader) hasActualHeader = true;
-            }
+            const trPr = getDirectChild(child, ns.w, 'trPr');
+            if (trPr && getDirectChild(trPr, ns.w, 'tblHeader')) hasActualHeader = true;
 
             const cells = [];
-            let colIndex = 0;
-
-            for (const tcChild of tr.children) {
+            let rowTexts = [];
+            for (const tcChild of child.children) {
                 if (tcChild.localName !== 'tc') continue;
-                const tc = tcChild;
-
                 const cellParagraphs = [];
                 let cellText = '';
-                for (const tcContent of tc.children) {
+                for (const tcContent of tcChild.children) {
                     if (tcContent.localName === 'p') {
-                        const pText = extractTextFromElement(tcContent, ns);
+                        const pText = extractVisibleText(tcContent, ns);
                         cellParagraphs.push(pText);
                         cellText += pText + ' ';
                     }
                 }
                 cellText = cellText.trim();
-                tableTextForHash += cellText;
-
-                cells.push({
-                    text: cellText,
-                    rowIndex, columnIndex: colIndex,
-                    paragraphs: cellParagraphs,
-                    // tableId/rowId/cellId assigned after hash
-                });
-                colIndex++;
+                rowTexts.push(cellText);
+                allCellTexts.push(cellText);
+                cells.push({ text: cellText, paragraphs: cellParagraphs,
+                    rowIndex: rows.length, columnIndex: cells.length });
             }
             rows.push(cells);
-            rowIndex++;
         }
 
-        // Generate hashed table ID from content
-        const tableId = hashId('table', `table|${tableIdx}|${tableTextForHash.substring(0, 200)}`);
+        // Generate hashed IDs from full normalized content
+        const tableContent = allCellTexts.join('|');
+        const tableId = hashId('table', `table|${tableContent}`);
 
-        // Assign hashed row/cell IDs
         for (let ri = 0; ri < rows.length; ri++) {
-            const rowId = hashId('table', `${tableId}|row|${ri}|${rows[ri].map(c=>c.text).join('|').substring(0,100)}`);
+            const rowContent = rows[ri].map(c => c.text).join('|');
+            const rowId = hashId('table', `${tableId}|row|${rowContent}`);
             for (let ci = 0; ci < rows[ri].length; ci++) {
                 const cell = rows[ri][ci];
                 cell.tableId = tableId;
                 cell.rowId = rowId;
-                cell.cellId = hashId('table', `${rowId}|cell|${ci}|${cell.text.substring(0,50)}`);
+                cell.cellId = hashId('table', `${rowId}|cell|${cell.text}`);
             }
         }
 
@@ -467,51 +492,37 @@ const DocumentParser = (() => {
         };
     }
 
-    function extractTextFromElement(node, ns) {
-        let text = '';
-        const tNodes = node.getElementsByTagNameNS(ns.w, 't');
-        for (const t of tNodes) text += t.textContent;
-        return text;
-    }
 
-
-    /**
-     * Full parseNumbering: numId→abstractNumId, levels, lvlOverride, startOverride, lvlRestart
-     */
-    function parseNumbering(xmlStr) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
-        if (doc.getElementsByTagName('parsererror').length) return {};
-
+    // ==========================================
+    // NUMBERING PARSING — full lvlOverride with w:lvl
+    // ==========================================
+    function parseNumbering(xmlStr, filename, parseXmlStrict) {
+        if (!filename) filename = 'numbering.xml';
+        if (!parseXmlStrict) {
+            parseXmlStrict = (content, fname) => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(content, 'application/xml');
+                if (doc.getElementsByTagName('parsererror').length) {
+                    throw new Error(`Neispravan XML: ${fname}`);
+                }
+                return doc;
+            };
+        }
+        const doc = parseXmlStrict(xmlStr, filename);
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         const result = { abstractNums: {}, nums: {} };
 
-        // Parse abstractNum elements
         const abstractNumNodes = doc.getElementsByTagNameNS(ns, 'abstractNum');
         for (const an of abstractNumNodes) {
             const abstractNumId = an.getAttribute('w:abstractNumId');
             const levels = {};
-
             const lvlNodes = an.getElementsByTagNameNS(ns, 'lvl');
             for (const lvl of lvlNodes) {
-                const ilvl = parseInt(lvl.getAttribute('w:ilvl'), 10);
-                const startNode = lvl.getElementsByTagNameNS(ns, 'start')[0];
-                const numFmtNode = lvl.getElementsByTagNameNS(ns, 'numFmt')[0];
-                const lvlTextNode = lvl.getElementsByTagNameNS(ns, 'lvlText')[0];
-                const lvlRestartNode = lvl.getElementsByTagNameNS(ns, 'lvlRestart')[0];
-
-                levels[ilvl] = {
-                    start: startNode ? parseInt(startNode.getAttribute('w:val'), 10) : null,
-                    numFmt: numFmtNode ? numFmtNode.getAttribute('w:val') : 'decimal',
-                    lvlText: lvlTextNode ? lvlTextNode.getAttribute('w:val') : '%1.',
-                    lvlRestart: lvlRestartNode
-                        ? parseInt(lvlRestartNode.getAttribute('w:val'), 10) : null,
-                };
+                levels[parseInt(lvl.getAttribute('w:ilvl'), 10)] = parseLvlNode(lvl, ns);
             }
             result.abstractNums[abstractNumId] = { levels };
         }
 
-        // Parse num elements with lvlOverride support
         const numNodes = doc.getElementsByTagNameNS(ns, 'num');
         for (const num of numNodes) {
             const numId = num.getAttribute('w:numId');
@@ -520,83 +531,111 @@ const DocumentParser = (() => {
                 abstractNumId: abstractNumIdRef ? abstractNumIdRef.getAttribute('w:val') : null,
                 lvlOverrides: {},
             };
-
-            // Parse lvlOverride elements
-            const lvlOverrideNodes = num.getElementsByTagNameNS(ns, 'lvlOverride');
-            for (const ov of lvlOverrideNodes) {
+            // Parse lvlOverride with full w:lvl support
+            const ovNodes = num.getElementsByTagNameNS(ns, 'lvlOverride');
+            for (const ov of ovNodes) {
                 const ilvl = parseInt(ov.getAttribute('w:ilvl'), 10);
                 const startOverrideNode = ov.getElementsByTagNameNS(ns, 'startOverride')[0];
+                const lvlNode = ov.getElementsByTagNameNS(ns, 'lvl')[0];
                 entry.lvlOverrides[ilvl] = {
                     startOverride: startOverrideNode
                         ? parseInt(startOverrideNode.getAttribute('w:val'), 10) : null,
+                    lvlDef: lvlNode ? parseLvlNode(lvlNode, ns) : null,
                 };
             }
-
             result.nums[numId] = entry;
         }
-
         return result;
     }
 
+    function parseLvlNode(lvl, ns) {
+        const startNode = lvl.getElementsByTagNameNS(ns, 'start')[0];
+        const numFmtNode = lvl.getElementsByTagNameNS(ns, 'numFmt')[0];
+        const lvlTextNode = lvl.getElementsByTagNameNS(ns, 'lvlText')[0];
+        const lvlRestartNode = lvl.getElementsByTagNameNS(ns, 'lvlRestart')[0];
+        return {
+            start: startNode ? parseInt(startNode.getAttribute('w:val'), 10) : null,
+            numFmt: numFmtNode ? numFmtNode.getAttribute('w:val') : 'decimal',
+            lvlText: lvlTextNode ? lvlTextNode.getAttribute('w:val') : '%1.',
+            lvlRestart: lvlRestartNode ? parseInt(lvlRestartNode.getAttribute('w:val'), 10) : null,
+        };
+    }
 
-    function parseFootnotes(xmlStr) {
-        const footnotes = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
-        if (doc.getElementsByTagName('parsererror').length) return [];
-        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        const fnNodes = doc.getElementsByTagNameNS(ns, 'footnote');
-        for (const fn of fnNodes) {
-            const id = fn.getAttribute('w:id');
-            const type = fn.getAttribute('w:type');
-            if (type === 'separator' || type === 'continuationSeparator') continue;
-            const text = extractTextFromXmlNode(fn, ns);
-            footnotes.push({ id, text, isEmpty: text.trim().length === 0 });
+
+    // ==========================================
+    // MULTILEVEL LABEL FORMATTING
+    // formatLabel replaces ALL %1–%9 placeholders using counters and level defs
+    // ==========================================
+    function formatLabel(lvlText, counters, levelDefinitions) {
+        let label = lvlText || '';
+        for (let lvl = 0; lvl <= 8; lvl++) {
+            const placeholder = `%${lvl + 1}`;
+            if (!label.includes(placeholder)) continue;
+            const counter = counters[lvl] || 0;
+            const lvlDef = levelDefinitions ? levelDefinitions[lvl] : null;
+            const fmt = lvlDef ? (lvlDef.numFmt || 'decimal') : 'decimal';
+            const formatted = formatSingleNumber(counter, fmt);
+            label = label.split(placeholder).join(formatted);
         }
-        return footnotes;
+        return label;
     }
 
-    function parseEndnotes(xmlStr) {
-        const endnotes = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
-        if (doc.getElementsByTagName('parsererror').length) return [];
-        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        const enNodes = doc.getElementsByTagNameNS(ns, 'endnote');
-        for (const en of enNodes) {
-            const id = en.getAttribute('w:id');
-            const type = en.getAttribute('w:type');
-            if (type === 'separator' || type === 'continuationSeparator') continue;
-            const text = extractTextFromXmlNode(en, ns);
-            endnotes.push({ id, text, isEmpty: text.trim().length === 0 });
+    /**
+     * Format a single number. Handles letter overflow (26→z, 27→aa, 28→ab).
+     */
+    function formatSingleNumber(num, numFmt) {
+        switch (numFmt) {
+            case 'decimal': return String(num);
+            case 'decimalZero': return num < 10 ? '0' + num : String(num);
+            case 'lowerLetter': return toLetter(num, false);
+            case 'upperLetter': return toLetter(num, true);
+            case 'lowerRoman': return toRoman(num).toLowerCase();
+            case 'upperRoman': return toRoman(num);
+            case 'ordinal': return num + '.';
+            default: return String(num);
         }
-        return endnotes;
     }
 
-    function extractTextFromXmlNode(node, ns) {
-        let text = '';
-        const tNodes = node.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) text += t.textContent;
-        return text;
+    /**
+     * Convert number to letter(s): 1→a, 26→z, 27→aa, 28→ab, 53→ba, etc.
+     */
+    function toLetter(num, upper) {
+        let result = '';
+        let n = num;
+        while (n > 0) {
+            n--;
+            result = String.fromCharCode((upper ? 65 : 97) + (n % 26)) + result;
+            n = Math.floor(n / 26);
+        }
+        return result;
     }
 
-    function extractTextFromXml(xmlStr) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
+    function toRoman(num) {
+        if (num <= 0) return String(num);
+        const vals = [1000,900,500,400,100,90,50,40,10,9,5,4,1];
+        const syms = ['M','CM','D','CD','C','XC','L','XL','X','IX','V','IV','I'];
+        let result = '';
+        for (let i = 0; i < vals.length; i++) {
+            while (num >= vals[i]) { result += syms[i]; num -= vals[i]; }
+        }
+        return result;
+    }
+
+    // Keep old API name for backward compat
+    function formatNumber(num, numFmt, lvlText, level) {
+        const counters = { [level]: num };
+        const levelDefs = { [level]: { numFmt: numFmt || 'decimal' } };
+        return formatLabel(lvlText || `%${level+1}.`, counters, levelDefs);
+    }
+
+
+    // ==========================================
+    // STYLES PARSING with basedOn chain support
+    // ==========================================
+    function parseStyles(xmlStr, filename, parseXmlStrict) {
+        const doc = parseXmlStrict(xmlStr, filename);
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        let text = '';
-        const tNodes = doc.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) text += t.textContent + ' ';
-        return text.trim();
-    }
-
-    function parseStyles(xmlStr) {
-        const styles = {};
-        styles._numFromStyle = {}; // numId/ilvl inherited from paragraph styles
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlStr, 'application/xml');
-        if (doc.getElementsByTagName('parsererror').length) return styles;
-        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const styles = { _numFromStyle: {}, _basedOn: {} };
         const styleNodes = doc.getElementsByTagNameNS(ns, 'style');
 
         for (const s of styleNodes) {
@@ -604,7 +643,13 @@ const DocumentParser = (() => {
             const nameNode = s.getElementsByTagNameNS(ns, 'name')[0];
             if (id && nameNode) styles[id] = nameNode.getAttribute('w:val');
 
-            // Check if style defines numbering (inherited by paragraphs using this style)
+            // Track basedOn relationships
+            const basedOnNode = s.getElementsByTagNameNS(ns, 'basedOn')[0];
+            if (basedOnNode && id) {
+                styles._basedOn[id] = basedOnNode.getAttribute('w:val');
+            }
+
+            // Direct numbering from style
             const pPr = s.getElementsByTagNameNS(ns, 'pPr')[0];
             if (pPr && id) {
                 const numPr = pPr.getElementsByTagNameNS(ns, 'numPr')[0];
@@ -623,7 +668,81 @@ const DocumentParser = (() => {
         return styles;
     }
 
+    /**
+     * Resolve basedOn chain: if a style doesn't have numFromStyle but its parent does, inherit
+     */
+    function resolveBasedOnNumbering(styles) {
+        const resolved = new Set();
+        function resolve(styleId) {
+            if (resolved.has(styleId)) return;
+            resolved.add(styleId);
+            if (styles._numFromStyle[styleId]) return; // Already has direct numbering
+            const parent = styles._basedOn[styleId];
+            if (!parent) return;
+            resolve(parent);
+            if (styles._numFromStyle[parent]) {
+                styles._numFromStyle[styleId] = { ...styles._numFromStyle[parent] };
+            }
+        }
+        for (const styleId of Object.keys(styles._basedOn)) {
+            resolve(styleId);
+        }
+    }
 
+
+    // ==========================================
+    // FOOTNOTES / ENDNOTES — throw on XML error
+    // ==========================================
+    function parseFootnotes(xmlStr, filename, parseXmlStrict) {
+        const doc = parseXmlStrict(xmlStr, filename);
+        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const footnotes = [];
+        const fnNodes = doc.getElementsByTagNameNS(ns, 'footnote');
+        for (const fn of fnNodes) {
+            const id = fn.getAttribute('w:id');
+            const type = fn.getAttribute('w:type');
+            if (type === 'separator' || type === 'continuationSeparator') continue;
+            const text = extractTextFromXmlNode(fn, ns);
+            footnotes.push({ id, text, isEmpty: text.trim().length === 0 });
+        }
+        return footnotes;
+    }
+
+    function parseEndnotes(xmlStr, filename, parseXmlStrict) {
+        const doc = parseXmlStrict(xmlStr, filename);
+        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const endnotes = [];
+        const enNodes = doc.getElementsByTagNameNS(ns, 'endnote');
+        for (const en of enNodes) {
+            const id = en.getAttribute('w:id');
+            const type = en.getAttribute('w:type');
+            if (type === 'separator' || type === 'continuationSeparator') continue;
+            const text = extractTextFromXmlNode(en, ns);
+            endnotes.push({ id, text, isEmpty: text.trim().length === 0 });
+        }
+        return endnotes;
+    }
+
+    function extractTextFromXmlNode(node, ns) {
+        let text = '';
+        const tNodes = node.getElementsByTagNameNS(ns, 't');
+        for (const t of tNodes) text += t.textContent;
+        return text;
+    }
+
+    function extractTextFromXml(xmlStr, filename, parseXmlStrict) {
+        const doc = parseXmlStrict(xmlStr, filename);
+        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        let text = '';
+        const tNodes = doc.getElementsByTagNameNS(ns, 't');
+        for (const t of tNodes) text += t.textContent + ' ';
+        return text.trim();
+    }
+
+
+    // ==========================================
+    // MARKDOWN / PLAIN TEXT
+    // ==========================================
     async function parseMarkdown(arrayBuffer, fileName) {
         const text = new TextDecoder('utf-8').decode(arrayBuffer);
         const lines = text.split('\n');
@@ -633,28 +752,20 @@ const DocumentParser = (() => {
             const line = lines[i];
             const hm = line.match(/^(#{1,6})\s+(.*)$/);
             if (hm) {
-                elements.push({
-                    type: 'heading', index: index++, headingLevel: hm[1].length,
-                    text: hm[2], style: `Heading${hm[1].length}`,
-                    runs: [{ text: hm[2] }], lineNumber: i + 1,
-                    isDirectQuote: false, quoteConfidence: 0, paraId: null,
-                });
+                elements.push({ type: 'heading', index: index++, headingLevel: hm[1].length,
+                    text: hm[2], style: `Heading${hm[1].length}`, runs: [{ text: hm[2] }],
+                    lineNumber: i+1, isDirectQuote: false, quoteConfidence: 0, paraId: null });
             } else if (line.trim().length > 0) {
-                elements.push({
-                    type: 'paragraph', index: index++, text: line, style: 'Normal',
-                    runs: [{ text: line }], lineNumber: i + 1, isEmpty: false,
-                    isDirectQuote: false, quoteConfidence: 0, paraId: null,
-                });
+                elements.push({ type: 'paragraph', index: index++, text: line, style: 'Normal',
+                    runs: [{ text: line }], lineNumber: i+1, isEmpty: false,
+                    isDirectQuote: false, quoteConfidence: 0, paraId: null });
             }
         }
-        return {
-            type: 'markdown', name: fileName, elements,
-            footnotes: [], endnotes: [], headers: [], footers: [],
-            styles: {}, numbering: {}, htmlPreview: '',
+        return { type: 'markdown', name: fileName, elements, footnotes: [], endnotes: [],
+            headers: [], footers: [], styles: {}, numbering: {}, htmlPreview: '',
             rawText: text, wordCount: countWords(text),
-            paragraphCount: elements.filter(el => el.type === 'paragraph').length,
-            tableCount: 0, headingCount: elements.filter(el => el.type === 'heading').length,
-        };
+            paragraphCount: elements.filter(e => e.type === 'paragraph').length,
+            tableCount: 0, headingCount: elements.filter(e => e.type === 'heading').length };
     }
 
     async function parsePlainText(arrayBuffer, fileName) {
@@ -664,43 +775,34 @@ const DocumentParser = (() => {
         let index = 0;
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].trim().length > 0) {
-                elements.push({
-                    type: 'paragraph', index: index++, text: lines[i], style: 'Normal',
-                    runs: [{ text: lines[i] }], lineNumber: i + 1, isEmpty: false,
-                    isDirectQuote: false, quoteConfidence: 0, paraId: null,
-                });
+                elements.push({ type: 'paragraph', index: index++, text: lines[i], style: 'Normal',
+                    runs: [{ text: lines[i] }], lineNumber: i+1, isEmpty: false,
+                    isDirectQuote: false, quoteConfidence: 0, paraId: null });
             }
         }
-        return {
-            type: 'txt', name: fileName, elements,
-            footnotes: [], endnotes: [], headers: [], footers: [],
-            styles: {}, numbering: {}, htmlPreview: '',
+        return { type: 'txt', name: fileName, elements, footnotes: [], endnotes: [],
+            headers: [], footers: [], styles: {}, numbering: {}, htmlPreview: '',
             rawText: text, wordCount: countWords(text),
-            paragraphCount: elements.length, tableCount: 0, headingCount: 0,
-        };
+            paragraphCount: elements.length, tableCount: 0, headingCount: 0 };
     }
 
 
-    /**
-     * Assign hashed IDs: uses w14:paraId first, then content hash.
-     * Hash is based on type + style + text + previousText + nextText (no absolute index).
-     */
+    // ==========================================
+    // HASHED IDS — uses w14:paraId or content hash (no absolute index)
+    // ==========================================
     function assignHashedIds(docMap) {
         for (let i = 0; i < docMap.elements.length; i++) {
             const el = docMap.elements[i];
-
-            // Prefer w14:paraId if available
             if (el.paraId) {
-                const typePrefix = el.type === 'heading' ? 'h' : el.type === 'table' ? 't' : 'p';
-                el.id = `${typePrefix}-${el.paraId}`;
+                const prefix = el.type === 'heading' ? 'h' : el.type === 'table' ? 't' : 'p';
+                el.id = `${prefix}-${el.paraId}`;
                 continue;
             }
-
-            const prevText = i > 0 ? (docMap.elements[i - 1].text || '').substring(0, 30) : '';
-            const nextText = i < docMap.elements.length - 1
-                ? (docMap.elements[i + 1].text || '').substring(0, 30) : '';
-            const contextStr = `${el.type}|${el.style || ''}|${el.text || ''}|${prevText}|${nextText}`;
-            el.id = hashId(el.type, contextStr);
+            if (el.type === 'table' && el.tableId) { el.id = el.tableId; continue; }
+            const prevText = i > 0 ? (docMap.elements[i-1].text || '').substring(0,30) : '';
+            const nextText = i < docMap.elements.length-1 ? (docMap.elements[i+1].text || '').substring(0,30) : '';
+            const ctx = `${el.type}|${el.style||''}|${el.text||''}|${prevText}|${nextText}`;
+            el.id = hashId(el.type, ctx);
         }
     }
 
@@ -711,60 +813,34 @@ const DocumentParser = (() => {
             hash = Math.imul(hash, 0x01000193);
         }
         const hashStr = (hash >>> 0).toString(36).padStart(7, '0');
-        const typePrefix = prefix === 'heading' ? 'h' : prefix === 'table' ? 't' : 'p';
-        return `${typePrefix}-${hashStr}`;
+        const tp = prefix === 'heading' ? 'h' : prefix === 'table' ? 't' : 'p';
+        return `${tp}-${hashStr}`;
     }
 
-    /**
-     * Detect direct quotes. Uses multiline-aware regex.
-     * Does NOT mark pure-italic paragraphs without an additional signal.
-     */
+    // ==========================================
+    // DIRECT QUOTE DETECTION
+    // ==========================================
     function detectDirectQuotes(docMap) {
         for (const el of docMap.elements) {
             if (!el.text || el.type === 'heading') continue;
             const text = el.text.trim();
             let confidence = 0;
-
-            // Pattern 1: Typographic quotes (multiline-aware)
-            if (/^\u201E[\s\S]*\u201C$/.test(text)) {
-                confidence = 0.95;
-            }
-            // Pattern 2: Guillemets
-            else if (/^\u00AB[\s\S]*\u00BB$/.test(text)) {
-                confidence = 0.90;
-            }
-            // Pattern 3: Italic + additional signal (quote style or length > 100)
+            if (/^\u201E[\s\S]*\u201C$/.test(text)) confidence = 0.95;
+            else if (/^\u00AB[\s\S]*\u00BB$/.test(text)) confidence = 0.90;
             else if (el.runs && el.runs.length > 0 && el.runs.every(r => r.italic) &&
-                text.length > 20 &&
-                (el.style && el.style.match(/quote|citat|blockquote/i) || text.length > 100)) {
+                text.length > 20 && (el.style && el.style.match(/quote|citat|blockquote/i) || text.length > 100))
                 confidence = 0.80;
-            }
-            // Pattern 4: Em-dash dialogue
-            else if (/^[\u2014\u2015]\s/.test(text)) {
-                confidence = 0.80;
-            }
-            // Pattern 5: Quote/Citat style (without italic requirement)
-            else if (el.style && el.style.match(/quote|citat|blockquote/i)) {
-                confidence = 0.90;
-            }
-            // Pattern 6: Entirely Greek text
-            else if (/^[\u0370-\u03FF\u1F00-\u1FFF\s,.;\u00B7'"]+$/.test(text)) {
-                confidence = 0.85;
-            }
-
-            if (confidence > 0) {
-                el.isDirectQuote = true;
-                el.quoteConfidence = confidence;
-            }
+            else if (/^[\u2014\u2015]\s/.test(text)) confidence = 0.80;
+            else if (el.style && el.style.match(/quote|citat|blockquote/i)) confidence = 0.90;
+            else if (/^[\u0370-\u03FF\u1F00-\u1FFF\s,.;\u00B7'"]+$/.test(text)) confidence = 0.85;
+            if (confidence > 0) { el.isDirectQuote = true; el.quoteConfidence = confidence; }
         }
     }
 
-    function countWords(text) {
-        return text.split(/\s+/).filter(w => w.length > 0).length;
-    }
+    function countWords(text) { return text.split(/\s+/).filter(w => w.length > 0).length; }
 
     // Public API
-    return { parse, parseNumbering, hashId, formatNumber };
+    return { parse, parseNumbering, hashId, formatNumber, formatLabel, toLetter, setTrackedChangesMode };
 })();
 
 if (typeof module !== 'undefined' && module.exports) {
