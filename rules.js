@@ -28,7 +28,6 @@ const RuleEngine = (() => {
             { key: 'duplicates', name: 'Duple reči', fn: checkDuplicateWords },
             { key: 'toc', name: 'TOC vs naslovi', fn: checkTocVsHeadings },
             { key: 'numbering', name: 'Numeracija lista', fn: checkNumbering },
-            { key: 'dashes', name: 'Crtice i rasponi', fn: () => ({ findings: [], scannedCount: 0, skippedCount: 0 }) },
             { key: 'bibliography', name: 'Bibliografija', fn: checkBibliography },
             { key: 'urls', name: 'URL-ovi', fn: checkUrls },
             { key: 'footnotes', name: 'Fusnote', fn: checkFootnotes },
@@ -502,7 +501,9 @@ const RuleEngine = (() => {
                 if (!text.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/)) {
                     findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
                 }
-                if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i)) {
+                if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i) &&
+                    // Skip journal articles (have quoted title, journal name, or vol/issue indicators)
+                    !text.match(/[„"\u201E\u201C\u00AB\u00BB]/) && !text.match(/\b(Journal|Review|Bulletin|Proceedings|Annals|Quarterly|Vol\.|Issue|pp\.|str\.)\b/i)) {
                     findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true }));
                 }
             }

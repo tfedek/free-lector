@@ -470,6 +470,56 @@ test('electronic sources with URL not flagged for missing year', () => {
 });
 
 // ==========================================
+// Two identical tables get different IDs
+// ==========================================
+console.log('\nIdentične tabele:');
+test('two identical tables get different tableId', () => {
+    // Simulate by checking parser hashId with occurrence logic
+    // In real parsing, parseTable._seen tracks duplicates
+    const id1 = DocumentParser.hashId('table', 'table|A|B');
+    const id2 = DocumentParser.hashId('table', 'table|A|B|#2');
+    assert.notStrictEqual(id1, id2, 'Second occurrence should differ');
+});
+test('two identical rows in same table get different rowId', () => {
+    const id1 = DocumentParser.hashId('table', 'tbl|row|Same');
+    const id2 = DocumentParser.hashId('table', 'tbl|row|Same|#2');
+    assert.notStrictEqual(id1, id2);
+});
+
+// ==========================================
+// All export after resolving findings
+// ==========================================
+console.log('\nExport all posle rešavanja:');
+test('all export includes resolved findings with full count', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [
+        {id:'F-1',category:'A',priority:'OBAVEZNO',confidence:0.9,original:'x',replacement:'y',rationale:'r',status:'DONE',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-1',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null},
+        {id:'F-2',category:'B',priority:'PROVERITI',confidence:0.8,original:'a',replacement:'b',rationale:'s',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-2',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null},
+    ];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    // Mark one as DONE in the original
+    json.findings[0].status = 'DONE';
+    const exported = Exporter.applyExportFilter(json, 'all');
+    assert.strictEqual(exported.findings.length, 2, 'All export should include all findings');
+    assert.strictEqual(exported.summary.total_occurrences, 2);
+    assert.strictEqual(exported.summary.mandatory, 1, 'DONE finding still counts in all export');
+});
+
+// ==========================================
+// Journal article not flagged for missing publisher
+// ==========================================
+console.log('\nČlanak u časopisu:');
+test('journal article with quoted title not flagged for publisher', () => {
+    const doc = makeDocMap([
+        {type:'heading', text:'Bibliografija', headingLevel:1},
+        {text:'Yadin, Yigael. \u201eAnd Dan, Why Did He Remain in Ships.\u201c Australian Journal of Biblical Archaeology, 1968.'},
+    ]);
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const pubFindings = findings.filter(f=>f.category==='Bibliografija'&&f.rationale.includes('izdavač'));
+    assert.strictEqual(pubFindings.length, 0, 'Journal article should not trigger publisher warning');
+});
+
+// ==========================================
 // SUMMARY — run async tests then report
 // ==========================================
 

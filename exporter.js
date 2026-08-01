@@ -282,18 +282,23 @@ const Exporter = (() => {
      * Apply export filter with full recalculation
      */
     function applyExportFilter(auditJson, exportFilter) {
-        if (!exportFilter || exportFilter === 'all') return auditJson;
+        // Always deep clone to avoid exporting mutated in-memory state
         const filtered = deepClone(auditJson);
-        filtered.findings = filtered.findings.filter(f => f.status === 'OPEN');
 
-        const open = filtered.findings;
+        if (exportFilter === 'open') {
+            filtered.findings = filtered.findings.filter(f => f.status === 'OPEN');
+        }
+        // else 'all': keep all findings as-is
+
+        // Recalculate summary from the exported findings set
+        const targetFindings = filtered.findings;
         const s = filtered.summary;
-        s.blockers = open.filter(f => f.priority === 'BLOCKER').length;
-        s.mandatory = open.filter(f => f.priority === 'OBAVEZNO').length;
-        s.verify = open.filter(f => f.priority === 'PROVERITI').length;
-        s.recommendations = open.filter(f => f.priority === 'PREPORUKA').length;
-        s.total_occurrences = open.length;
-        s.total_finding_categories = new Set(open.map(f => f.category)).size;
+        s.blockers = targetFindings.filter(f => f.priority === 'BLOCKER').length;
+        s.mandatory = targetFindings.filter(f => f.priority === 'OBAVEZNO').length;
+        s.verify = targetFindings.filter(f => f.priority === 'PROVERITI').length;
+        s.recommendations = targetFindings.filter(f => f.priority === 'PREPORUKA').length;
+        s.total_occurrences = targetFindings.length;
+        s.total_finding_categories = new Set(targetFindings.map(f => f.category)).size;
 
         const scope = filtered.scope;
         const reqCaps = filtered.required_capabilities || DEFAULT_REQUIRED_CAPABILITIES;
@@ -305,7 +310,7 @@ const Exporter = (() => {
         else s.final_assessment = `${s.mandatory} obaveznih, ${s.blockers} blokirajućih. Nije spreman.`;
 
         filtered.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
-        filtered.global_patterns = extractGlobalPatterns(open);
+        filtered.global_patterns = extractGlobalPatterns(targetFindings);
         return filtered;
     }
 

@@ -60,7 +60,8 @@ const DocumentParser = (() => {
         // Track total decompressed size across ALL entries
         let totalDecompressed = 0;
 
-        // Count ALL entries upfront (binaries, XML, rels — everything)
+        // Count ALL entries incrementally — reject as soon as cumulative limit exceeded.
+        // JSZip decompresses per-entry (no sub-entry streaming available in browser).
         for (const [, entry] of Object.entries(zip.files)) {
             if (entry.dir) continue;
             const bytes = await entry.async('uint8array');
@@ -126,6 +127,10 @@ const DocumentParser = (() => {
 
         // Resolve basedOn chain for numbering inheritance
         resolveBasedOnNumbering(styles);
+
+        // Reset table ID occurrence counters for this document
+        parseTable._seen = {};
+        parseTable._seenRows = {};
 
         const elements = parseDocumentXml(docContent, styles, numbering, parseXmlStrict);
 
@@ -467,13 +472,29 @@ const DocumentParser = (() => {
             rows.push(cells);
         }
 
-        // Generate hashed IDs from full normalized content
+        // Generate hashed IDs — use occurrence counter for identical content
         const tableContent = allCellTexts.join('|');
-        const tableId = hashId('table', `table|${tableContent}`);
+        const rawTableHash = hashId('table', `table|${tableContent}`);
+        // Track how many times this exact table hash has appeared
+        if (!parseTable._seen) parseTable._seen = {};
+        parseTable._seen[rawTableHash] = (parseTable._seen[rawTableHash] || 0) + 1;
+        const tableOccurrence = parseTable._seen[rawTableHash];
+        const tableId = tableOccurrence > 1
+            ? hashId('table', `table|${tableContent}|#${tableOccurrence}`)
+            : rawTableHash;
 
         for (let ri = 0; ri < rows.length; ri++) {
             const rowContent = rows[ri].map(c => c.text).join('|');
-            const rowId = hashId('table', `${tableId}|row|${rowContent}`);
+            const rawRowHash = hashId('table', `${tableId}|row|${rowContent}`);
+            // Track identical rows within this table
+            if (!parseTable._seenRows) parseTable._seenRows = {};
+            const rowKey = `${tableId}|${rawRowHash}`;
+            parseTable._seenRows[rowKey] = (parseTable._seenRows[rowKey] || 0) + 1;
+            const rowOccurrence = parseTable._seenRows[rowKey];
+            const rowId = rowOccurrence > 1
+                ? hashId('table', `${tableId}|row|${rowContent}|#${rowOccurrence}`)
+                : rawRowHash;
+
             for (let ci = 0; ci < rows[ri].length; ci++) {
                 const cell = rows[ri][ci];
                 cell.tableId = tableId;
