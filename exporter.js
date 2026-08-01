@@ -102,6 +102,7 @@ const Exporter = (() => {
             findings,
             passed_checks: passedChecks,
             global_patterns: extractGlobalPatterns(findings),
+            required_capabilities: requiredCaps,
         };
     }
 
@@ -295,7 +296,7 @@ const Exporter = (() => {
         s.total_finding_categories = new Set(open.map(f => f.category)).size;
 
         const scope = filtered.scope;
-        const reqCaps = DEFAULT_REQUIRED_CAPABILITIES;
+        const reqCaps = filtered.required_capabilities || DEFAULT_REQUIRED_CAPABILITIES;
         const reqComplete = reqCaps.every(cap => scope[cap] === true);
         s.can_be_marked_final = reqComplete && s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
 
@@ -328,8 +329,7 @@ const Exporter = (() => {
     }
 
     /**
-     * SHA-256 based document ID from normalized content (no filename).
-     * Uses FNV-1a 128-bit emulation (4x32-bit) for browser compat without crypto API.
+     * FNV-based content hash for document ID (normalized content, no filename).
      */
     function generateDocId(rawText) {
         const input = (rawText || '').replace(/\s+/g, ' ').trim();

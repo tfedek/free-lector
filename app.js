@@ -49,7 +49,7 @@
     const modeRadios = document.querySelectorAll('input[name="audit-mode"]');
     const MODE_CHECKS = {
         FULL_AUDIT: null, // all enabled
-        PROOFREADING: new Set(['brackets','quotes','spacing','scriptMix','duplicates','dashes']),
+        PROOFREADING: new Set(['brackets','quotes','spacing','scriptMix','duplicates']),
         BIBLIOGRAPHY: new Set(['bibliography','brackets','spacing']),
     };
 
@@ -61,7 +61,8 @@
         const allowed = MODE_CHECKS[mode];
         document.querySelectorAll('[data-check]').forEach(cb => {
             if (allowed === null) {
-                cb.checked = true; cb.disabled = false;
+                // FULL_AUDIT: enable all but don't force-check (respect HTML defaults)
+                cb.disabled = false;
             } else {
                 const isAllowed = allowed.has(cb.dataset.check);
                 cb.checked = isAllowed; cb.disabled = !isAllowed;

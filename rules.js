@@ -468,7 +468,7 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const bibIdx = docMap.elements.findIndex(el =>
             el.type === 'heading' &&
-            el.text.trim().match(/^(bibliografija|literatura|korišćeni izvori|spisak izvora|references|works cited|bibliography|literaturverzeichnis)$/i));
+            el.text.trim().match(/^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography)$/i));
         if (bibIdx === -1) return { findings, scannedCount, skippedCount };
 
         const bibHeading = docMap.elements[bibIdx];
@@ -498,14 +498,14 @@ const RuleEngine = (() => {
             }
         }
 
-        // Cross-reference — require 3+ char surname, exclude common place names
-        const commonPlaces = new Set(['Beograd','Zagreb','Sarajevo','London','Oxford','Cambridge','Berlin','Paris','Roma','Athens','Chicago','Moscow','Moskva','Atina']);
+        // Cross-reference — require 3+ char surname, exclude common place names and generic words
+        const excludeWords = new Set(['Beograd','Zagreb','Sarajevo','London','Oxford','Cambridge','Berlin','Paris','Roma','Athens','Chicago','Moscow','Moskva','Atina','Review','Journal','Press','University','Institut','Academy','Society','Edition','Volume','Chapter']);
         const citPats = [/\(([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]{2,}),?\s*\d{4}\)/g, /([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]{2,})\s*\(\d{4}\)/g];
         const cited = new Set();
         for (const el of docMap.elements.slice(0, bibIdx)) {
             if (!el.text) continue;
             for (const p of citPats) { p.lastIndex = 0; let m2; while ((m2 = p.exec(el.text)) !== null) {
-                if (!commonPlaces.has(m2[1])) cited.add(m2[1]);
+                if (!excludeWords.has(m2[1])) cited.add(m2[1]);
             }}
         }
         for (const author of cited) {
@@ -571,7 +571,7 @@ const RuleEngine = (() => {
     // ==========================================
     function checkAllCaps(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI']);
+        const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI','NSP']);
 
         // Collect words from headings — these are likely intentional title words
         const headingWords = new Set();
@@ -582,8 +582,28 @@ const RuleEngine = (() => {
             }
         }
 
+        // Collect ALL-CAPS words from table cells (likely table headers)
+        const tableCapsWords = new Set();
         for (const el of docMap.elements) {
-            if (!el.text || el.type === 'heading') { skippedCount++; continue; }
+            if (el.type === 'table' && el.rows) {
+                for (const row of el.rows) {
+                    for (const cell of row) {
+                        if (!cell.text) continue;
+                        const cw = cell.text.match(/[\p{L}\p{M}]+/gu) || [];
+                        cw.forEach(w => { if (w === w.toUpperCase() && w.length >= 3) tableCapsWords.add(w); });
+                    }
+                }
+            }
+        }
+
+        // Find first heading index — skip everything before it (title page)
+        const firstHeadingIdx = docMap.elements.findIndex(e => e.type === 'heading');
+
+        for (let i = 0; i < docMap.elements.length; i++) {
+            const el = docMap.elements[i];
+            if (!el.text || el.type === 'heading' || el.type === 'table') { skippedCount++; continue; }
+            // Skip title page (before first heading)
+            if (firstHeadingIdx >= 0 && i < firstHeadingIdx) { skippedCount++; continue; }
             scannedCount++;
             const words = el.text.match(/[\p{L}\p{M}]+/gu) || [];
             for (const word of words) {
@@ -591,7 +611,8 @@ const RuleEngine = (() => {
                 if (word === word.toUpperCase() && word !== word.toLowerCase()) {
                     if (known.has(word)) continue;
                     if (/^[IVXLCDM]+$/.test(word)) continue;
-                    if (headingWords.has(word)) continue; // Skip words used in headings
+                    if (headingWords.has(word)) continue;
+                    if (tableCapsWords.has(word)) continue;
                     findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.` }));
                 }
             }

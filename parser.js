@@ -18,7 +18,7 @@ const DocumentParser = (() => {
     }
 
     async function parse(file, options = {}) {
-        if (options.trackedChanges) trackedChangesMode = options.trackedChanges;
+        trackedChangesMode = options.trackedChanges ?? 'accept';
         const ext = file.name.split('.').pop().toLowerCase();
         const arrayBuffer = await file.arrayBuffer();
         let docMap;
@@ -57,37 +57,28 @@ const DocumentParser = (() => {
             }
         }
 
-        // Track total decompressed size across ALL entries (images, media, etc.)
+        // Track total decompressed size across ALL entries
         let totalDecompressed = 0;
 
+        // Count ALL entries upfront (binaries, XML, rels — everything)
+        for (const [, entry] of Object.entries(zip.files)) {
+            if (entry.dir) continue;
+            const bytes = await entry.async('uint8array');
+            totalDecompressed += bytes.length;
+            if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
+                throw new Error(`Ukupna raspakovana veličina prelazi ${MAX_UNCOMPRESSED_SIZE} bajtova.`);
+            }
+        }
+
+        // loadEntry for XML: re-reads (already counted above), enforces per-file limit
         async function loadEntry(path) {
             const file = zip.file(path);
             if (!file) return null;
             const bytes = await file.async('uint8array');
-            totalDecompressed += bytes.length;
-            if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
-                throw new Error(`Ukupna raspakovanja veličina prelazi ${MAX_UNCOMPRESSED_SIZE} bajtova.`);
-            }
             if (bytes.length > MAX_SINGLE_XML_SIZE) {
                 throw new Error(`${path} prelazi ${MAX_SINGLE_XML_SIZE} bajtova.`);
             }
             return new TextDecoder('utf-8').decode(bytes);
-        }
-
-        // Also count non-XML entries toward total size
-        for (const [path, entry] of Object.entries(zip.files)) {
-            if (entry.dir) continue;
-            if (path.endsWith('.xml') || path.endsWith('.rels')) continue; // counted when loaded
-            // For binary entries (images, etc), get size
-            try {
-                const bytes = await entry.async('uint8array');
-                totalDecompressed += bytes.length;
-                if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
-                    throw new Error(`Ukupna raspakovanja veličina prelazi limit (binarne datoteke).`);
-                }
-            } catch (e) {
-                if (e.message.includes('prelazi')) throw e;
-            }
         }
 
         const contentTypesXml = await loadEntry('[Content_Types].xml');
@@ -295,13 +286,18 @@ const DocumentParser = (() => {
                 }
                 const inst = listState.instances[instanceKey];
 
-                // lvlRestart: when a HIGHER level (lower number) advances, reset this level
+                // lvlRestart: when a higher level (lower ilvl number) advances,
+                // reset only levels whose lvlRestart value matches the advancing level
                 if (prevWasSameNum && prevEl.numLevel != null && prevEl.numLevel < level) {
-                    // Higher level advanced → reset current and all lower
+                    // A higher level advanced — check each lower level's lvlRestart
                     for (let l = level; l <= 9; l++) {
-                        if (inst.counters[l] !== undefined) {
-                            const lvlDefL = abstractDef.levels[l];
-                            inst.counters[l] = (lvlDefL ? (lvlDefL.start ?? 1) : 1) - 1;
+                        const lDef = abstractDef.levels[l];
+                        if (!lDef) continue;
+                        // lvlRestart specifies which level's advancement triggers reset
+                        // Default behavior: reset when any higher level advances
+                        const restartAt = lDef.lvlRestart ?? (l > 0 ? l - 1 : null);
+                        if (restartAt != null && prevEl.numLevel <= restartAt) {
+                            inst.counters[l] = (lDef.start ?? 1) - 1;
                         }
                     }
                 }
@@ -470,16 +466,16 @@ const DocumentParser = (() => {
 
         // Generate hashed IDs from full normalized content
         const tableContent = allCellTexts.join('|');
-        const tableId = hashId('table', `table|${tableContent}`);
+        const tableId = hashId('table', `table|${tableIdx}|${tableContent}`);
 
         for (let ri = 0; ri < rows.length; ri++) {
             const rowContent = rows[ri].map(c => c.text).join('|');
-            const rowId = hashId('table', `${tableId}|row|${rowContent}`);
+            const rowId = hashId('table', `${tableId}|row|${ri}|${rowContent}`);
             for (let ci = 0; ci < rows[ri].length; ci++) {
                 const cell = rows[ri][ci];
                 cell.tableId = tableId;
                 cell.rowId = rowId;
-                cell.cellId = hashId('table', `${rowId}|cell|${cell.text}`);
+                cell.cellId = hashId('table', `${rowId}|cell|${ci}|${cell.text}`);
             }
         }
 
