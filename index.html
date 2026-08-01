@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free Lector — Lektorsko-korektorski auditor</title>
+    <meta name="description" content="Besplatan, client-side alat za tehničku proveru dokumenata. Rule-based, bez AI, bez slanja podataka. Provera zagrada, navodnika, razmaka, mešanja pisama, grčkih citata i više.">
+    <meta name="keywords" content="lektor, korektor, provera dokumenata, srpski, akademski tekst, rule-based, bez AI">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>Free Lector</h1>
+                <span class="badge">Rule-based</span>
+            </div>
+            <p class="header-desc">Deterministička lektorska provera dokumenata. Bez AI. Bez slanja podataka. Sve u vašem browseru.</p>
+        </header>
+
+        <!-- Upload Section -->
+        <section id="upload-section">
+            <div class="card">
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <p class="drop-text">Prevucite dokument ovde</p>
+                        <p class="drop-or">ili</p>
+                        <button id="file-btn" class="btn btn-primary">Izaberite fajl</button>
+                        <input type="file" id="file-input" accept=".docx,.md,.txt,.text" hidden>
+                        <p class="formats">Podržani formati: .docx, .md, .txt</p>
+                    </div>
+                </div>
+
+                <div id="file-info" class="file-info hidden">
+                    <div class="file-info-left">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span id="file-name"></span>
+                        <span id="file-size" class="file-size"></span>
+                    </div>
+                    <button id="remove-file" class="btn-icon" title="Ukloni fajl">&times;</button>
+                </div>
+            </div>
+
+            <!-- Audit Mode Selection -->
+            <div id="options-panel" class="card hidden">
+                <h3>Režim provere</h3>
+                <div class="mode-selector">
+                    <label class="mode-option">
+                        <input type="radio" name="audit-mode" value="FULL_AUDIT" checked>
+                        <div class="mode-card">
+                            <strong>Potpuni audit</strong>
+                            <span>Sve determinističke provere</span>
+                        </div>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="audit-mode" value="PROOFREADING">
+                        <div class="mode-card">
+                            <strong>Samo lektura</strong>
+                            <span>Pravopis, zagrade, razmaci</span>
+                        </div>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="audit-mode" value="BIBLIOGRAPHY">
+                        <div class="mode-card">
+                            <strong>Bibliografija</strong>
+                            <span>Format, doslednost, podudarnost</span>
+                        </div>
+                    </label>
+                </div>
+
+                <h3>Provere</h3>
+                <div class="checks-grid">
+                    <label><input type="checkbox" data-check="brackets" checked> Nebalansirane zagrade</label>
+                    <label><input type="checkbox" data-check="quotes" checked> Navodnici (ravni/tipografski)</label>
+                    <label><input type="checkbox" data-check="markdown" checked> Markdown artefakti</label>
+                    <label><input type="checkbox" data-check="spacing" checked> Razmaci i interpunkcija</label>
+                    <label><input type="checkbox" data-check="scriptMix" checked> Mešanje ćirilice/latinice</label>
+                    <label><input type="checkbox" data-check="greek" checked> Grčki citati bez prevoda</label>
+                    <label><input type="checkbox" data-check="duplicates" checked> Duple reči</label>
+                    <label><input type="checkbox" data-check="toc" checked> TOC vs naslovi</label>
+                    <label><input type="checkbox" data-check="numbering" checked> Numeracija lista</label>
+                    <label><input type="checkbox" data-check="dashes" checked> Crtice i rasponi</label>
+                    <label><input type="checkbox" data-check="bibliography" checked> Bibliografija</label>
+                    <label><input type="checkbox" data-check="urls" checked> URL-ovi</label>
+                    <label><input type="checkbox" data-check="footnotes" checked> Fusnote</label>
+                    <label><input type="checkbox" data-check="repetition" checked> Ponovljeni pasusi</label>
+                    <label><input type="checkbox" data-check="capsWords" checked> ALL-CAPS reči u tekstu</label>
+                    <label><input type="checkbox" data-check="emptyHeadings" checked> Prazni naslovi</label>
+                </div>
+
+                <div class="options-footer">
+                    <label class="house-style-label">
+                        Kućni stil:
+                        <select id="house-style">
+                            <option value="sr-Latn-academic">Srpski akademski (latinica)</option>
+                            <option value="sr-Cyrl-academic">Srpski akademski (ćirilica)</option>
+                            <option value="sr-Latn-general">Srpski opšti (latinica)</option>
+                        </select>
+                    </label>
+                    <button id="run-btn" class="btn btn-primary btn-large">Pokreni audit</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Progress -->
+        <section id="progress-section" class="card hidden">
+            <h3 id="progress-phase">Priprema...</h3>
+            <div class="progress-bar">
+                <div id="progress-fill" class="progress-fill"></div>
+            </div>
+            <p id="progress-text" class="progress-detail"></p>
+        </section>
+
+        <!-- Results Section -->
+        <section id="results-section" class="hidden">
+            <!-- Summary Card -->
+            <div class="card results-summary">
+                <div class="results-header">
+                    <h2>Rezultati audita</h2>
+                    <div class="results-actions">
+                        <button id="download-xlsx" class="btn btn-success">Excel</button>
+                        <button id="download-md" class="btn btn-secondary">Markdown</button>
+                        <button id="download-json" class="btn btn-secondary">JSON</button>
+                        <button id="reset-btn" class="btn btn-outline">Nova provera</button>
+                    </div>
+                </div>
+                <div id="stats" class="stats"></div>
+                <p id="final-assessment" class="final-assessment"></p>
+            </div>
+
+            <!-- Filters -->
+            <div class="card filters-bar">
+                <div class="filter-group">
+                    <label>Prioritet:</label>
+                    <select id="filter-priority">
+                        <option value="all">Svi</option>
+                        <option value="BLOCKER">Blocker</option>
+                        <option value="OBAVEZNO">Obavezno</option>
+                        <option value="PROVERITI">Proveriti</option>
+                        <option value="PREPORUKA">Preporuka</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Kategorija:</label>
+                    <select id="filter-category">
+                        <option value="all">Sve</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Odeljak:</label>
+                    <select id="filter-section">
+                        <option value="all">Svi</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="auto-fix-label">
+                        <input type="checkbox" id="filter-autofixable"> Samo automatski primenljivo
+                    </label>
+                </div>
+            </div>
+
+            <!-- Findings Table -->
+            <div class="card">
+                <div class="table-wrapper">
+                    <table id="results-table">
+                        <thead>
+                            <tr>
+                                <th class="col-num">#</th>
+                                <th class="col-loc">Lokacija</th>
+                                <th class="col-cat">Kategorija</th>
+                                <th class="col-pri">Prioritet</th>
+                                <th class="col-orig">Original</th>
+                                <th class="col-fix">Predlog ispravke</th>
+                                <th class="col-reason">Obrazloženje</th>
+                                <th class="col-conf">Pouzdanost</th>
+                                <th class="col-actions">Akcije</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-body"></tbody>
+                    </table>
+                </div>
+                <p id="no-results" class="no-results hidden">Nisu pronađene greške u izabranim filterima.</p>
+            </div>
+
+            <!-- Passed Checks -->
+            <div class="card" id="passed-section">
+                <h3>Provere bez pronađenih grešaka</h3>
+                <div id="passed-list" class="passed-list"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- App modules -->
+    <script src="parser.js"></script>
+    <script src="rules.js"></script>
+    <script src="exporter.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
