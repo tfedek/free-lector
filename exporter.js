@@ -103,6 +103,10 @@ const Exporter = (() => {
                 },
                 mandatory_open: findings.filter(f => f.priority === 'OBAVEZNO' && f.status === 'OPEN').length,
                 mandatory_total: mandatory,
+                blockers_open: findings.filter(f => f.priority === 'BLOCKER' && f.status === 'OPEN').length,
+                blockers_total: blockers,
+                verify_open: findings.filter(f => f.priority === 'PROVERITI' && f.status === 'OPEN').length,
+                verify_total: verify,
                 can_be_marked_final: canBeMarkedFinal,
                 final_assessment: finalAssessment,
             },
@@ -168,6 +172,10 @@ const Exporter = (() => {
             ['Nije greška', auditJson.summary.by_status ? auditJson.summary.by_status.rejected : ''],
             ['Obavezno otvoreno', auditJson.summary.mandatory_open != null ? auditJson.summary.mandatory_open : ''],
             ['Obavezno ukupno', auditJson.summary.mandatory_total != null ? auditJson.summary.mandatory_total : ''],
+            ['Blocker otvoreno', auditJson.summary.blockers_open != null ? auditJson.summary.blockers_open : ''],
+            ['Blocker ukupno', auditJson.summary.blockers_total != null ? auditJson.summary.blockers_total : ''],
+            ['Proveriti otvoreno', auditJson.summary.verify_open != null ? auditJson.summary.verify_open : ''],
+            ['Proveriti ukupno', auditJson.summary.verify_total != null ? auditJson.summary.verify_total : ''],
             [],
             ['Završna procena', auditJson.summary.final_assessment],
         ];
@@ -253,7 +261,7 @@ const Exporter = (() => {
         lines.push(`- Obavezne: **${s.mandatory}** | Proveriti: **${s.verify}** | Preporuke: **${s.recommendations}** | Blocker: **${s.blockers}**`);
         lines.push(`- Provere bez grešaka: **${s.passed_checks}**`);
         if (s.by_status) lines.push(`- Otvoreno: **${s.by_status.open}** | Rešeno: **${s.by_status.done}** | Nije greška: **${s.by_status.rejected}**`);
-        if (s.mandatory_open != null) lines.push(`- Obavezno otvoreno: **${s.mandatory_open}** | Obavezno ukupno: **${s.mandatory_total}**`);
+        if (s.mandatory_open != null) lines.push(`- Obavezno: **${s.mandatory_open}**/${s.mandatory_total} | Blocker: **${s.blockers_open != null ? s.blockers_open : s.blockers}**/${s.blockers_total != null ? s.blockers_total : s.blockers} | Proveriti: **${s.verify_open != null ? s.verify_open : s.verify}**/${s.verify_total != null ? s.verify_total : s.verify} *(otvoreno/ukupno)*`);
         lines.push(`- Finalan: ${s.can_be_marked_final ? '**DA**' : '**NE**'}`);
         lines.push('');
 
@@ -335,6 +343,10 @@ const Exporter = (() => {
         };
         s.mandatory_open = targetFindings.filter(f => f.priority === 'OBAVEZNO' && f.status === 'OPEN').length;
         s.mandatory_total = targetFindings.filter(f => f.priority === 'OBAVEZNO').length;
+        s.blockers_open = targetFindings.filter(f => f.priority === 'BLOCKER' && f.status === 'OPEN').length;
+        s.blockers_total = targetFindings.filter(f => f.priority === 'BLOCKER').length;
+        s.verify_open = targetFindings.filter(f => f.priority === 'PROVERITI' && f.status === 'OPEN').length;
+        s.verify_total = targetFindings.filter(f => f.priority === 'PROVERITI').length;
 
         const scope = filtered.scope;
         const reqCaps = filtered.required_capabilities || DEFAULT_REQUIRED_CAPABILITIES;
