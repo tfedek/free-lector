@@ -204,8 +204,8 @@ const DocumentParser = (() => {
 
         // Track unsupported/partially-supported elements
         const processingCoverage = {
-            supported: ['paragraphs', 'headings', 'tables', 'footnotes', 'endnotes', 'headers', 'footers', 'numbering', 'styles', 'tracked_changes'],
-            partial: [],
+            supported: ['paragraphs', 'headings', 'tables', 'numbering', 'styles', 'tracked_changes'],
+            partial: ['footnotes', 'endnotes', 'headers', 'footers'],
             unsupported: [],
         };
 
@@ -245,9 +245,17 @@ const DocumentParser = (() => {
                 ...headers.map(h => h.text),
                 ...footers.map(f => f.text),
             ].join('\n'),
-            wordCount: countWords(elements.map(el => el.text).join(' ')),
+            wordCount: countWords([
+                ...elements.map(el => el.text),
+                ...footnotes.map(fn => fn.text),
+                ...endnotes.map(en => en.text),
+                ...headers.map(h => h.text),
+                ...footers.map(f => f.text),
+            ].join(' ')),
             paragraphCount: elements.filter(el => el.type === 'paragraph').length,
-            tableCount: elements.filter(el => el.type === 'table').length,
+            tableCount: elements.filter(el => el.type === 'table').length +
+                elements.filter(el => el.type === 'table' && el.hasNestedTables).reduce((sum, tbl) =>
+                    sum + tbl.rows.flat().filter(c => c.nestedTables).reduce((s, c) => s + c.nestedTables.length, 0), 0),
             headingCount: elements.filter(el => el.type === 'heading').length,
         };
     }

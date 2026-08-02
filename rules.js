@@ -311,6 +311,34 @@ const RuleEngine = (() => {
                     }
                 }
             }
+
+            const loc = el.type === 'header' ? 'zaglavlju' : 'podnožju';
+
+            if (options.quotes) {
+                const sc = (text.match(/"/g)||[]).length;
+                if (sc > 0) findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${sc} ravnih navodnika u ${loc}]`, replacement: '[zameniti tipografskim]', rationale: `${sc} ravnih navodnika u ${loc}.`, autoFixable: true }));
+            }
+
+            if (options.duplicates) {
+                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let dm;
+                const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                while ((dm = dupeRe.exec(text)) !== null) {
+                    if (allowed.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
+                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč u ${loc}.`, autoFixable: true }));
+                }
+            }
+
+            if (options.urls) {
+                const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g; let um;
+                while ((um = urlRe.exec(text)) !== null) {
+                    if (um[0].match(/[,.;]+$/)) findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: um[0], replacement: um[0].replace(/[,.;]+$/,''), rationale: `URL u ${loc} završen interpunkcijom.` }));
+                }
+            }
+
+            if (options.markdown && docMap.type !== 'markdown') {
+                const mdPats = [/(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, /\[([^\]]+)\]\([^)]+\)/g];
+                for (const re of mdPats) { re.lastIndex=0; let mm; while ((mm=re.exec(text))!==null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Markdown u ${loc}.` })); } }
+            }
         }
         return findings;
     }
@@ -718,10 +746,29 @@ const RuleEngine = (() => {
 
             // Only run sub-checks that are enabled in options
             if (options.spacing) {
-                const dbl = /  +/g; let m;
+                let m;
+                const dbl = /  +/g;
                 while ((m = dbl.exec(text)) !== null) {
                     const ctx = getContext(text, m.index, 20);
                     findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                }
+                const sbp = / +([,.:;!?])/g;
+                while ((m = sbp.exec(text)) !== null) {
+                    const b = text.substring(Math.max(0,m.index-5),m.index);
+                    if (b.match(/https?:$/) || b.match(/\d$/)) continue;
+                    const ctx = getContext(text, m.index, 20);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                }
+                const sbc = / +([)\]}>»\u201C])/g;
+                while ((m = sbc.exec(text)) !== null) {
+                    const ctx = getContext(text, m.index, 20);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: `Razmak pre zatvorene zagrade u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                }
+                const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
+                while ((m = nsa.exec(text)) !== null) {
+                    if (text.substring(Math.max(0,m.index-10),m.index+10).match(/https?:|:\\/)) continue;
+                    const ctx = getContext(text, m.index, 20);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true }));
                 }
             }
 

@@ -185,18 +185,19 @@
                 !f.original.startsWith('Lista') && !f.original.startsWith('Izvor') &&
                 !f.original.startsWith('Citiran')) {
                 if (f.cellId) {
-                    // Find cell text
-                    const tbl = docMap.elements.find(e => e.tableId === f.tableId);
-                    if (tbl && tbl.rows) {
+                    const tbl = findTableById(docMap, f.tableId);
+                    if (!tbl) continue; // Location doesn't exist — skip
+                    if (tbl.rows) {
                         const cell = tbl.rows.flat().find(c => c.cellId === f.cellId);
                         if (cell) {
                             const clean = f.original.replace(/^\.\.\./, '').replace(/\.\.\.$/, '');
                             if (clean.length > 3 && !cell.text.includes(clean)) continue;
-                        }
+                        } else continue; // Cell not found — skip
                     }
                 } else {
                     const el = docMap.elements.find(e => e.id === f.paragraphId);
-                    if (el && el.text) {
+                    if (!el) continue; // Location doesn't exist — skip
+                    if (el.text) {
                         const clean = f.original.replace(/^\.\.\./, '').replace(/\.\.\.$/, '');
                         if (clean.length > 3 && !el.text.includes(clean)) continue;
                     }
@@ -420,5 +421,32 @@
     function escHtml(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
     function truncate(str, max) { if (!str) return ''; return str.length > max ? str.substring(0,max)+'...' : str; }
     function formatFileSize(b) { if (b<1024) return b+' B'; if (b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+
+    function findTableById(docMap, tableId) {
+        // Search top-level tables
+        const topLevel = docMap.elements.find(e => e.tableId === tableId);
+        if (topLevel) return topLevel;
+        // Search nested tables recursively
+        for (const el of docMap.elements) {
+            if (el.type !== 'table' || !el.rows) continue;
+            const found = findNestedTable(el, tableId);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    function findNestedTable(tbl, tableId) {
+        for (const row of tbl.rows) {
+            for (const cell of row) {
+                if (!cell.nestedTables) continue;
+                for (const nt of cell.nestedTables) {
+                    if (nt.tableId === tableId) return nt;
+                    const deeper = findNestedTable(nt, tableId);
+                    if (deeper) return deeper;
+                }
+            }
+        }
+        return null;
+    }
 
 })();
