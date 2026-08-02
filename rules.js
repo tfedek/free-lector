@@ -139,8 +139,11 @@ const RuleEngine = (() => {
                         }
                     }
 
-                    // Apply direct quote protection to cell findings
-                    if (el.isDirectQuote) {
+                    // Apply direct quote protection PER CELL (not per table)
+                    const cellIsQuote = /^\u201E[\s\S]*\u201C$/.test(text.trim()) ||
+                        /^\u00AB[\s\S]*\u00BB$/.test(text.trim()) ||
+                        /^[\u2014\u2015]\s/.test(text.trim());
+                    if (cellIsQuote) {
                         for (const f of findings) {
                             if (f.cellId === cell.cellId && f.priority !== 'PROVERITI') {
                                 f.priority = 'PROVERITI'; f.autoFixable = false; f.requiresSourceVerification = true;
@@ -431,7 +434,7 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const bibIdx = docMap.elements.findIndex(el =>
             el.type === 'heading' &&
-            el.text.trim().match(/^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography)$/i));
+            el.text.trim().match(/^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography|primarni izvori|sekundarni izvori|arhivski izvori|korišćena literatura|spisak literature)$/i));
         if (bibIdx === -1) return { findings, scannedCount, skippedCount };
 
         const bibHeading = docMap.elements[bibIdx];
@@ -518,9 +521,72 @@ const RuleEngine = (() => {
     // ==========================================
     function checkFootnotes(docMap) {
         const findings = [];
-        const scannedCount = docMap.footnotes.length + docMap.endnotes.length;
-        for (const fn of docMap.footnotes) { if (fn.isEmpty) findings.push(makeFinding({ element: { id: `fn-${fn.id}`, type: 'footnote', text: '', section: '(fusnote)', isDirectQuote: false }, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[Fusnota ${fn.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: 'Prazna fusnota.' })); }
-        for (const en of docMap.endnotes) { if (en.isEmpty) findings.push(makeFinding({ element: { id: `en-${en.id}`, type: 'endnote', text: '', section: '(endnote)', isDirectQuote: false }, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[Endnota ${en.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: 'Prazna endnota.' })); }
+        const allNotes = [...docMap.footnotes, ...docMap.endnotes];
+        const scannedCount = allNotes.length;
+
+        for (const note of allNotes) {
+            const isFootnote = docMap.footnotes.includes(note);
+            const noteType = isFootnote ? 'Fusnota' : 'Endnota';
+            const noteEl = { id: `${isFootnote?'fn':'en'}-${note.id}`, type: isFootnote?'footnote':'endnote', text: note.text, section: `(${noteType.toLowerCase()} ${note.id})`, isDirectQuote: false };
+
+            if (note.isEmpty) {
+                findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.` }));
+                continue;
+            }
+
+            // Run content checks on non-empty footnotes/endnotes
+            const text = note.text;
+
+            // Double spaces
+            const dbl = /  +/g; let m;
+            while ((m = dbl.exec(text)) !== null) {
+                const ctx = getContext(text, m.index, 20);
+                findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true }));
+            }
+
+            // Unbalanced brackets
+            for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
+                let depth = 0;
+                for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
+                if (depth !== 0) {
+                    findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.` }));
+                }
+            }
+
+            // Script mixing
+            const words = text.match(/[\p{L}\p{M}]+/gu) || [];
+            for (const word of words) {
+                if (word.length < 2) continue;
+                if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
+                    findings.push(makeFinding({ element: noteEl, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${noteType.toLowerCase()}: \u201e${word}\u201c.` }));
+                }
+            }
+
+            // Straight quotes
+            const straightCount = (text.match(/"/g) || []).length;
+            if (straightCount > 0) {
+                findings.push(makeFinding({ element: noteEl, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${straightCount} ravnih navodnika u ${noteType.toLowerCase()}]`, replacement: '[zameniti tipografskim]', rationale: `${straightCount} ravnih navodnika u ${noteType.toLowerCase()} ${note.id}.`, autoFixable: true }));
+            }
+
+            // Duplicate words
+            const dupeRe = /\b(\p{L}+)\s+\1\b/giu;
+            const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+            let md;
+            while ((md = dupeRe.exec(text)) !== null) {
+                if (allowedDupes.has(md[1].toLowerCase()) || md[1].length < 2) continue;
+                findings.push(makeFinding({ element: noteEl, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: md[0], replacement: md[1], rationale: `Ponovljena reč u ${noteType.toLowerCase()}: \u201e${md[1]}\u201c.`, autoFixable: true }));
+            }
+
+            // URLs
+            const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+            let mu;
+            while ((mu = urlRe.exec(text)) !== null) {
+                const url = mu[0];
+                if (url.match(/[,.;]+$/)) {
+                    findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.` }));
+                }
+            }
+        }
         return { findings, scannedCount, skippedCount: 0 };
     }
 

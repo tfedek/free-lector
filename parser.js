@@ -461,6 +461,8 @@ const DocumentParser = (() => {
                         const pText = extractVisibleText(tcContent, ns);
                         cellParagraphs.push(pText);
                         cellText += pText + ' ';
+                    } else if (tcContent.localName === 'tbl') {
+                        cellParagraphs.push('[UGNJEŽDENA TABELA \u2014 sadržaj nije obrađen]');
                     }
                 }
                 cellText = cellText.trim();

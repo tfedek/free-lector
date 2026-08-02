@@ -21,12 +21,17 @@ const DocumentParser = require(path.resolve(__dirname, 'parser.js'));
 
 let passed = 0, failed = 0;
 const asyncQueue = [];
+let lastSectionLabel = '';
 function test(name, fn) {
     try { fn(); passed++; console.log(`  \x1b[32m\u2713\x1b[0m ${name}`); }
     catch (e) { failed++; console.log(`  \x1b[31m\u2717\x1b[0m ${name}\n    ${e.message}`); }
 }
 function testAsync(name, fn) {
-    asyncQueue.push({ name, fn });
+    asyncQueue.push({ name, fn, section: lastSectionLabel });
+}
+function section(label) {
+    lastSectionLabel = label;
+    console.log(label);
 }
 
 function makeDocMap(elements, opts = {}) {
@@ -175,7 +180,7 @@ test('formatLabel multilevel %1.%2.', () => {
 // ==========================================
 // ROUND 4: Real ZIP tests
 // ==========================================
-console.log('\nZIP testovi:');
+section('\nZIP testovi:');
 
 testAsync('ZIP with vbaProject.bin rejected', async () => {
     const buf = await createDocxZip('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Test</w:t></w:r></w:p></w:body></w:document>', { vbaProject: true });
@@ -205,7 +210,7 @@ testAsync('ZIP with large image counted toward total size', async () => {
 // ==========================================
 // Real parser ID stability
 // ==========================================
-console.log('\nID stabilnost (parser):');
+section('\nID stabilnost (parser):');
 
 testAsync('ID stable after insertion elsewhere', async () => {
     const makeDoc = (paras) => `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paras.map(t=>`<w:p><w:r><w:t>${t}</w:t></w:r></w:p>`).join('')}</w:body></w:document>`;
@@ -225,7 +230,7 @@ testAsync('ID stable after insertion elsewhere', async () => {
 // ==========================================
 // Real listInstanceId from parsed XML
 // ==========================================
-console.log('\nlistInstanceId iz parsiranog XML:');
+section('\nlistInstanceId iz parsiranog XML:');
 
 testAsync('listInstanceId unique per restart', async () => {
     const numXml = `<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
@@ -306,7 +311,7 @@ test('unmatched quotes across paragraphs detected', () => {
 // ==========================================
 // Tracked changes
 // ==========================================
-console.log('\nTracked changes:');
+section('\nTracked changes:');
 testAsync('tracked changes: accept mode skips deleted text', async () => {
     const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello </w:t></w:r><w:del><w:r><w:delText>old </w:delText></w:r></w:del><w:ins><w:r><w:t>new </w:t></w:r></w:ins><w:r><w:t>world</w:t></w:r></w:p></w:body></w:document>`;
     const buf = await createDocxZip(docXml);
@@ -326,7 +331,7 @@ testAsync('tracked changes: show_deleted includes deleted text', async () => {
 // ==========================================
 // basedOn numbering inheritance
 // ==========================================
-console.log('\nbasedOn numeracija:');
+section('\nbasedOn numeracija:');
 testAsync('numbering inherited through basedOn chain', async () => {
     const stylesXml = `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:styleId="ListBase"><w:name w:val="List Base"/><w:pPr><w:numPr><w:numId w:val="1"/><w:ilvl w:val="0"/></w:numPr></w:pPr></w:style><w:style w:styleId="MyList"><w:name w:val="My List"/><w:basedOn w:val="ListBase"/></w:style></w:styles>`;
     const numXml = `<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
@@ -431,6 +436,109 @@ test('final gate requires grammar+visual+style', () => {
 
 
 // ==========================================
+// C3 fix: direct quote protection per cell
+// ==========================================
+console.log('\nDirektni citat u ćeliji:');
+test('cell with typographic quotes gets PROVERITI for spacing error', () => {
+    const tableEl = { type:'table', text:'test', tableId:'t-q',
+        rows:[[
+            {text:'Normalan  tekst.', tableId:'t-q', rowId:'t-q-r0', cellId:'t-q-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['Normalan  tekst.']},
+            {text:'\u201eOvo je direktan  citat.\u201c', tableId:'t-q', rowId:'t-q-r0', cellId:'t-q-r0-c1', rowIndex:0, columnIndex:1, paragraphs:['\u201eOvo je direktan  citat.\u201c']},
+        ]]};
+    const doc = makeDocMap([tableEl]);
+    const {findings} = RuleEngine.runAudit(doc, {spacing:true});
+    const c1findings = findings.filter(f=>f.cellId==='t-q-r0-c1');
+    assert(c1findings.length >= 1, 'Should find spacing error in quoted cell');
+    assert.strictEqual(c1findings[0].priority, 'PROVERITI', 'Quoted cell should be PROVERITI');
+    assert.strictEqual(c1findings[0].autoFixable, false);
+    assert.strictEqual(c1findings[0].requiresSourceVerification, true);
+    // Normal cell should still be OBAVEZNO
+    const c0findings = findings.filter(f=>f.cellId==='t-q-r0-c0');
+    assert(c0findings.length >= 1);
+    assert.strictEqual(c0findings[0].priority, 'OBAVEZNO');
+});
+
+// ==========================================
+// C2 fix: footnote content checks
+// ==========================================
+console.log('\nSadržaj fusnota:');
+test('double space in footnote detected', () => {
+    const doc = makeDocMap([{text:'Tekst.'}], {footnotes:[{id:'1', text:'Vid. Apijan,  Ilirika 2.', isEmpty:false}]});
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const fnSpacing = findings.filter(f=>f.category==='Razmaci'&&f.section.includes('fusnot'));
+    assert(fnSpacing.length >= 1, 'Should detect double space in footnote');
+});
+test('unbalanced bracket in footnote detected', () => {
+    const doc = makeDocMap([{text:'Tekst.'}], {footnotes:[{id:'2', text:'Vid. (Apijan, Ilirika 2', isEmpty:false}]});
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const fnBrackets = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('fusnot'));
+    assert(fnBrackets.length >= 1, 'Should detect unbalanced bracket in footnote');
+});
+
+// ==========================================
+// C2: endnote bracket check
+// ==========================================
+console.log('\nEndnote provera:');
+test('unbalanced bracket in endnote detected', () => {
+    const doc = makeDocMap([{text:'Tekst.'}], {footnotes:[], endnotes:[{id:'1', text:'Uporedi (Apijan, Ilirika', isEmpty:false}]});
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    const enBrackets = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('endnot'));
+    assert(enBrackets.length >= 1, 'Should detect unbalanced bracket in endnote');
+});
+
+// ==========================================
+// C4: Primarni/Sekundarni izvori as standalone bib heading
+// ==========================================
+console.log('\nPrimarni/Sekundarni izvori:');
+test('"Primarni izvori" recognized as bibliography heading', () => {
+    const doc = makeDocMap([
+        {type:'heading', text:'Primarni izvori', headingLevel:1},
+        {text:'Petrović M. Analiza. Beograd'},
+    ]);
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    assert(findings.some(f=>f.category==='Bibliografija'), 'Should trigger bibliography check');
+});
+test('"Sekundarni izvori" recognized as bibliography heading', () => {
+    const doc = makeDocMap([
+        {type:'heading', text:'Sekundarni izvori', headingLevel:1},
+        {text:'Jovanović S. Studija. Novi Sad'},
+    ]);
+    const {findings} = RuleEngine.runAudit(doc, allOpts());
+    assert(findings.some(f=>f.category==='Bibliografija'), 'Should trigger bibliography check');
+});
+
+// ==========================================
+// Nested table signal
+// ==========================================
+section('\nUgnježdena tabela:');
+testAsync('nested table produces signal in cell paragraphs', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Outer cell</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e=>e.type==='table');
+    assert(tbl, 'Should have table element');
+    const cellParas = tbl.rows[0][0].paragraphs;
+    assert(cellParas.some(p=>p.includes('UGNJEŽDENA TABELA')), 'Should signal nested table');
+    // Inner cell text should NOT be in outer cell text
+    assert(!tbl.rows[0][0].text.includes('Inner cell'), 'Nested table text should not leak');
+});
+
+// ==========================================
+// Real parser test: identical tables
+// ==========================================
+section('\nIdentične tabele (real parser):');
+testAsync('two identical tables in DOCX get different tableId', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Same</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Same</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const tables = result.elements.filter(e=>e.type==='table');
+    assert.strictEqual(tables.length, 2, 'Should find 2 tables');
+    assert.notStrictEqual(tables[0].tableId, tables[1].tableId, 'Identical tables must have different IDs');
+});
+
+// ==========================================
 // Additional tests: ancient source skipped, antičke excluded
 // ==========================================
 console.log('\nAntički izvori:');
@@ -509,7 +617,12 @@ test('journal article with quoted title not flagged for publisher', () => {
 // ==========================================
 
 (async () => {
-    for (const { name, fn } of asyncQueue) {
+    let lastPrintedSection = '';
+    for (const { name, fn, section } of asyncQueue) {
+        if (section && section !== lastPrintedSection) {
+            console.log(section);
+            lastPrintedSection = section;
+        }
         try { await fn(); passed++; console.log(`  \x1b[32m\u2713\x1b[0m ${name}`); }
         catch (e) { failed++; console.log(`  \x1b[31m\u2717\x1b[0m ${name}\n    ${e.message}`); }
     }

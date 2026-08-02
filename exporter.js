@@ -96,6 +96,13 @@ const Exporter = (() => {
                 total_occurrences: findings.length,
                 blockers, mandatory, verify, recommendations,
                 passed_checks: passedChecks.length,
+                by_status: {
+                    open: findings.filter(f => f.status === 'OPEN').length,
+                    done: findings.filter(f => f.status === 'DONE').length,
+                    rejected: findings.filter(f => f.status === 'REJECTED').length,
+                },
+                mandatory_open: findings.filter(f => f.priority === 'OBAVEZNO' && f.status === 'OPEN').length,
+                mandatory_total: mandatory,
                 can_be_marked_final: canBeMarkedFinal,
                 final_assessment: finalAssessment,
             },
@@ -299,6 +306,13 @@ const Exporter = (() => {
         s.recommendations = targetFindings.filter(f => f.priority === 'PREPORUKA').length;
         s.total_occurrences = targetFindings.length;
         s.total_finding_categories = new Set(targetFindings.map(f => f.category)).size;
+        s.by_status = {
+            open: targetFindings.filter(f => f.status === 'OPEN').length,
+            done: targetFindings.filter(f => f.status === 'DONE').length,
+            rejected: targetFindings.filter(f => f.status === 'REJECTED').length,
+        };
+        s.mandatory_open = targetFindings.filter(f => f.priority === 'OBAVEZNO' && f.status === 'OPEN').length;
+        s.mandatory_total = targetFindings.filter(f => f.priority === 'OBAVEZNO').length;
 
         const scope = filtered.scope;
         const reqCaps = filtered.required_capabilities || DEFAULT_REQUIRED_CAPABILITIES;
