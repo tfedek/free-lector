@@ -540,10 +540,14 @@ const RuleEngine = (() => {
             if (!el.text) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-            const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let m;
-            while ((m = re.exec(el.text)) !== null) {
-                if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
-                findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
+            // Check per-paragraph (split on newlines) to avoid false positives across paragraphs
+            const lines = el.text.split('\n');
+            for (const line of lines) {
+                const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let m;
+                while ((m = re.exec(line)) !== null) {
+                    if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
+                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
+                }
             }
         }
         return { findings, scannedCount, skippedCount };
@@ -609,8 +613,8 @@ const RuleEngine = (() => {
                     const prev = items[i-1], curr = items[i];
                     const expected = prev.displayedNumber + 1;
                     if (curr.displayedNumber !== expected) {
-                        // Compute expectedLabel using same formatter
-                        const lvlText = curr.displayedLabel ? guessLvlText(curr.displayedLabel, curr.displayedNumber) : '%1.';
+                        // Use stored lvlTextPattern for proper expected label
+                        const lvlText = curr.lvlTextPattern || '%1.';
                         const expLabel = lvlText.replace(/%\d/, String(expected));
                         findings.push(makeFinding({ element: curr, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.92, original: `Stavka ${curr.displayedLabel||curr.displayedNumber} (prethodno: ${prev.displayedLabel||prev.displayedNumber})`, replacement: `Očekivano: ${expLabel}`, rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.` }));
                     }
@@ -649,13 +653,6 @@ const RuleEngine = (() => {
         return { findings, scannedCount, skippedCount };
     }
 
-    function guessLvlText(label, num) {
-        // Replace the LAST occurrence of the number (that's the current level)
-        const numStr = String(num);
-        const lastIdx = label.lastIndexOf(numStr);
-        if (lastIdx === -1) return label;
-        return label.substring(0, lastIdx) + '%1' + label.substring(lastIdx + numStr.length);
-    }
 
 
 
