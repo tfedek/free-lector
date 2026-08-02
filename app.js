@@ -217,6 +217,7 @@
         populateFilters(auditJson.findings);
         renderTable(auditJson.findings);
         renderPassedChecks(auditJson.passed_checks);
+        renderCoverage(auditJson.processing_coverage);
     }
 
     function updateStatsDisplay(auditJson) {
@@ -351,6 +352,23 @@
     function renderPassedChecks(checks) {
         passedList.innerHTML = '';
         checks.forEach(c => { const d = document.createElement('div'); d.className = 'passed-item'; d.textContent = `${c.area} (${c.count})`; passedList.appendChild(d); });
+    }
+
+    function renderCoverage(coverage) {
+        const section = document.getElementById('coverage-section');
+        if (!section || !coverage) return;
+        let html = '';
+        if (coverage.supported.length > 0) {
+            html += `<p><strong>Obrađeno:</strong> ${coverage.supported.join(', ')}</p>`;
+        }
+        if (coverage.partial.length > 0) {
+            html += `<p class="coverage-partial"><strong>Delimično obrađeno:</strong> ${coverage.partial.join(', ')}</p>`;
+        }
+        if (coverage.unsupported.length > 0) {
+            html += `<p class="coverage-unsupported"><strong>Nije obrađeno:</strong> ${coverage.unsupported.join(', ')}</p>`;
+        }
+        if (!html) html = '<p>Svi elementi dokumenta su potpuno obrađeni.</p>';
+        section.innerHTML = `<h3>Pokrivenost obrade</h3>${html}`;
     }
 
 

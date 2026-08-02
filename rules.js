@@ -56,6 +56,29 @@ const RuleEngine = (() => {
         const cellFindings = checkTableCells(docMap, options);
         findings.push(...cellFindings);
 
+        // Run checks on headers/footers
+        const hfFindings = checkHeadersFooters(docMap, options);
+        findings.push(...hfFindings);
+
+        // Report unsupported elements as warning
+        if (docMap.processingCoverage) {
+            const pc = docMap.processingCoverage;
+            if (pc.unsupported.length > 0 || pc.partial.length > 0) {
+                const parts = [];
+                if (pc.partial.length > 0) parts.push(`Delimično: ${pc.partial.join(', ')}`);
+                if (pc.unsupported.length > 0) parts.push(`Nije obrađeno: ${pc.unsupported.join(', ')}`);
+                findings.push(makeFinding({
+                    element: { id: 'doc-coverage', type: 'document', text: '', section: '(pokrivenost)', isDirectQuote: false },
+                    category: 'Pokrivenost',
+                    priority: 'PROVERITI',
+                    confidence: 1.0,
+                    original: parts.join('. '),
+                    replacement: '[proveriti navedene delove dokumenta ručno]',
+                    rationale: 'Dokument sadrži elemente koji nisu potpuno obrađeni. Rezultat audita može biti nepotpun.',
+                }));
+            }
+        }
+
         // Now form passedChecks (considers both element-level and cell-level findings)
         for (const check of checks) {
             if (!options[check.key]) continue;
@@ -156,6 +179,52 @@ const RuleEngine = (() => {
         return findings;
     }
 
+
+    // ==========================================
+    // HEADERS/FOOTERS — run basic checks on header/footer text
+    // ==========================================
+    function checkHeadersFooters(docMap, options) {
+        const findings = [];
+        const hfElements = [
+            ...(docMap.headerElements || []),
+            ...(docMap.footerElements || []),
+        ];
+        if (hfElements.length === 0) return findings;
+
+        for (const el of hfElements) {
+            if (!el.text || !el.text.trim()) continue;
+            const text = el.text;
+
+            if (options.spacing) {
+                const dbl = /  +/g; let m;
+                while ((m = dbl.exec(text)) !== null) {
+                    const ctx = getContext(text, m.index, 20);
+                    findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`, autoFixable: true }));
+                }
+            }
+
+            if (options.brackets) {
+                for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
+                    let depth = 0;
+                    for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
+                    if (depth !== 0) {
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.` }));
+                    }
+                }
+            }
+
+            if (options.scriptMix) {
+                const words = text.match(/[\p{L}\p{M}]+/gu) || [];
+                for (const word of words) {
+                    if (word.length < 2) continue;
+                    if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
+                        findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.` }));
+                    }
+                }
+            }
+        }
+        return findings;
+    }
 
     // ==========================================
     // BRACKETS — skip table elements (checked per-cell)

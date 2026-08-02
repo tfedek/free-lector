@@ -243,3 +243,9 @@ body {
     font-size: 0.8rem;
     background: white;
 }
+
+
+/* === Coverage section === */
+#coverage-section p { margin: 0.3rem 0; font-size: 0.85rem; }
+.coverage-partial { color: #92400e; }
+.coverage-unsupported { color: var(--danger); }

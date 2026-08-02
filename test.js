@@ -511,17 +511,18 @@ test('"Sekundarni izvori" recognized as bibliography heading', () => {
 // Nested table signal
 // ==========================================
 section('\nUgnježdena tabela:');
-testAsync('nested table produces signal in cell paragraphs', async () => {
+testAsync('nested table recursively parsed into parent cell', async () => {
     const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Outer cell</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr></w:tbl></w:body></w:document>`;
     const buf = await createDocxZip(docXml);
     const file = { name: 't.docx', arrayBuffer: async()=>buf };
     const result = await DocumentParser.parse(file);
     const tbl = result.elements.find(e=>e.type==='table');
     assert(tbl, 'Should have table element');
-    const cellParas = tbl.rows[0][0].paragraphs;
-    assert(cellParas.some(p=>p.includes('UGNJEŽDENA TABELA')), 'Should signal nested table');
-    // Inner cell text should NOT be in outer cell text
-    assert(!tbl.rows[0][0].text.includes('Inner cell'), 'Nested table text should not leak');
+    // Nested table text IS now included via recursive parsing
+    assert(tbl.rows[0][0].text.includes('Inner cell'), 'Nested table text should be in cell');
+    assert(tbl.hasNestedTables, 'hasNestedTables should be true');
+    // Paragraphs should contain [Tabela: ...] marker
+    assert(tbl.rows[0][0].paragraphs.some(p=>p.includes('[Tabela:')), 'Should have [Tabela:] marker');
 });
 
 // ==========================================
@@ -563,17 +564,10 @@ test('electronic sources with URL not flagged for missing year', () => {
 });
 
 // ==========================================
-// Two identical tables get different IDs
+// (Identical table hash test replaced by real parser test below)
 // ==========================================
 console.log('\nIdentične tabele:');
-test('two identical tables get different tableId', () => {
-    // Simulate by checking parser hashId with occurrence logic
-    // In real parsing, parseTable._seen tracks duplicates
-    const id1 = DocumentParser.hashId('table', 'table|A|B');
-    const id2 = DocumentParser.hashId('table', 'table|A|B|#2');
-    assert.notStrictEqual(id1, id2, 'Second occurrence should differ');
-});
-test('two identical rows in same table get different rowId', () => {
+test('two identical rows in same table get different rowId (hash)', () => {
     const id1 = DocumentParser.hashId('table', 'tbl|row|Same');
     const id2 = DocumentParser.hashId('table', 'tbl|row|Same|#2');
     assert.notStrictEqual(id1, id2);
@@ -610,6 +604,104 @@ test('journal article with quoted title not flagged for publisher', () => {
     const {findings} = RuleEngine.runAudit(doc, allOpts());
     const pubFindings = findings.filter(f=>f.category==='Bibliografija'&&f.rationale.includes('izdavač'));
     assert.strictEqual(pubFindings.length, 0, 'Journal article should not trigger publisher warning');
+});
+
+// ==========================================
+// INTEGRATION: merged cells (gridSpan/vMerge)
+// ==========================================
+section('\nSpojene ćelije:');
+testAsync('gridSpan parsed correctly', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Merged cell</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Normal</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e=>e.type==='table');
+    assert(tbl, 'Should have table');
+    assert.strictEqual(tbl.rows[0][0].gridSpan, 2, 'First cell gridSpan should be 2');
+    assert.strictEqual(tbl.rows[0][0].columnIndex, 0);
+    assert.strictEqual(tbl.rows[0][1].columnIndex, 2, 'Second cell starts at logical col 2');
+    assert(tbl.hasMergedCells, 'hasMergedCells should be true');
+});
+
+// ==========================================
+// INTEGRATION: recursive nested tables
+// ==========================================
+section('\nRekurzivne ugnježdene tabele:');
+testAsync('nested table text included in parent cell', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Outer</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e=>e.type==='table');
+    assert(tbl.rows[0][0].text.includes('Inner'), 'Nested table text should be in cell');
+    assert(tbl.hasNestedTables, 'hasNestedTables should be true');
+});
+
+// ==========================================
+// INTEGRATION: headers/footers checked
+// ==========================================
+section('\nHeaders/footers:');
+testAsync('header with double space produces finding', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`;
+    const headerXml = `<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Header  text</w:t></w:r></w:p></w:hdr>`;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', docXml);
+    zip.file('word/header1.xml', headerXml);
+    const buf = await zip.generateAsync({ type: 'arraybuffer' });
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    assert(result.headerElements.length >= 1, 'Should have header elements');
+    const {findings} = RuleEngine.runAudit(result, {spacing:true});
+    const hdrFindings = findings.filter(f=>f.section&&f.section.includes('zaglavlje'));
+    assert(hdrFindings.length >= 1, 'Should detect double space in header');
+});
+
+// ==========================================
+// INTEGRATION: footnotes content checked
+// ==========================================
+section('\nFusnote integracioni:');
+testAsync('footnote with bracket error detected via full parse', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Body text</w:t></w:r></w:p></w:body></w:document>`;
+    const fnXml = `<?xml version="1.0"?><w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Fusnota (bez zatvaranja</w:t></w:r></w:p></w:footnote></w:footnotes>`;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', docXml);
+    zip.file('word/footnotes.xml', fnXml);
+    const buf = await zip.generateAsync({ type: 'arraybuffer' });
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const {findings} = RuleEngine.runAudit(result, {footnotes:true,brackets:true});
+    assert(findings.some(f=>f.category==='Zagrade'&&f.section.includes('fusnot')), 'Should find bracket error in footnote');
+});
+
+// ==========================================
+// INTEGRATION: tracked changes
+// ==========================================
+section('\nTracked changes integracioni:');
+testAsync('deleted text excluded in accept mode', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:ins><w:r><w:t>kept</w:t></w:r></w:ins><w:del><w:r><w:delText>removed</w:delText></w:r></w:del></w:p></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file, {trackedChanges:'accept'});
+    assert(result.elements[0].text.includes('kept'));
+    assert(!result.elements[0].text.includes('removed'));
+});
+
+// ==========================================
+// INTEGRATION: unsupported elements warning
+// ==========================================
+section('\nNepodržani elementi:');
+testAsync('document with equations produces coverage warning', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body><w:p><m:oMath><m:r><w:t>x=1</w:t></m:r></m:oMath></w:p></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    assert(result.processingCoverage.unsupported.includes('equations'), 'Should detect equations');
+    const {findings} = RuleEngine.runAudit(result, {brackets:true});
+    const coverageFindings = findings.filter(f=>f.category==='Pokrivenost');
+    assert(coverageFindings.length >= 1, 'Should produce coverage warning finding');
+    assert(coverageFindings[0].rationale.includes('nisu potpuno'), 'Should mention incomplete processing');
 });
 
 // ==========================================

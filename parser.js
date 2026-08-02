@@ -61,10 +61,17 @@ const DocumentParser = (() => {
         let totalDecompressed = 0;
 
         // Count ALL entries incrementally — reject as soon as cumulative limit exceeded.
-        // JSZip decompresses per-entry (no sub-entry streaming available in browser).
-        for (const [, entry] of Object.entries(zip.files)) {
+        // Also check compression ratio to prevent ZIP bombs (max 200:1 ratio)
+        const MAX_COMPRESSION_RATIO = 200;
+        for (const [path, entry] of Object.entries(zip.files)) {
             if (entry.dir) continue;
+            const compressedSize = entry._data && entry._data.compressedSize
+                ? entry._data.compressedSize : 0;
             const bytes = await entry.async('uint8array');
+            // Check ratio if compressed size is known
+            if (compressedSize > 0 && bytes.length / compressedSize > MAX_COMPRESSION_RATIO) {
+                throw new Error(`Sumnjiv kompresioni odnos za ${path} (${Math.round(bytes.length/compressedSize)}:1). Moguć ZIP bomb.`);
+            }
             totalDecompressed += bytes.length;
             if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
                 throw new Error(`Ukupna raspakovana veličina prelazi ${MAX_UNCOMPRESSED_SIZE} bajtova.`);
@@ -134,13 +141,56 @@ const DocumentParser = (() => {
 
         const elements = parseDocumentXml(docContent, styles, numbering, parseXmlStrict);
 
+        // Convert headers/footers to checkable pseudo-elements
+        const headerElements = headers.map((h, i) => ({
+            type: 'header', index: i, text: h.text, style: 'Header',
+            runs: [{ text: h.text }], id: `hdr-${i}`, section: '(zaglavlje)',
+            isEmpty: !h.text.trim(), isDirectQuote: false, quoteConfidence: 0, paraId: null,
+        }));
+        const footerElements = footers.map((f, i) => ({
+            type: 'footer', index: i, text: f.text, style: 'Footer',
+            runs: [{ text: f.text }], id: `ftr-${i}`, section: '(podnožje)',
+            isEmpty: !f.text.trim(), isDirectQuote: false, quoteConfidence: 0, paraId: null,
+        }));
+
+        // Track unsupported/partially-supported elements
+        const processingCoverage = {
+            supported: ['paragraphs', 'headings', 'tables', 'footnotes', 'endnotes', 'headers', 'footers', 'numbering', 'styles', 'tracked_changes'],
+            partial: [],
+            unsupported: [],
+        };
+
+        // Check for textboxes, shapes, equations, charts in document XML
+        if (docContent.includes('w:txbxContent') || docContent.includes('wps:txbx')) {
+            processingCoverage.partial.push('textboxes');
+        }
+        if (docContent.includes('mc:AlternateContent') || docContent.includes('w:drawing')) {
+            processingCoverage.partial.push('drawings_shapes');
+        }
+        if (docContent.includes('m:oMath') || docContent.includes('m:oMathPara')) {
+            processingCoverage.unsupported.push('equations');
+        }
+        if (docContent.includes('c:chart')) {
+            processingCoverage.unsupported.push('charts');
+        }
+        if (docContent.includes('w:object') || docContent.includes('o:OLEObject')) {
+            processingCoverage.unsupported.push('ole_objects');
+        }
+
+        // Detect merged cells and nested tables for coverage report
+        const hasMergedCells = elements.some(el => el.type === 'table' && el.hasMergedCells);
+        const hasNestedTables = elements.some(el => el.type === 'table' && el.hasNestedTables);
+        if (hasMergedCells) processingCoverage.supported.push('merged_cells');
+        if (hasNestedTables) processingCoverage.supported.push('nested_tables');
+
         let htmlPreview = '';
         try { const r = await mammoth.convertToHtml({ arrayBuffer }); htmlPreview = r.value; }
         catch (e) { /* non-critical */ }
 
         return {
             type: 'docx', name: fileName, elements, footnotes, endnotes,
-            headers, footers, styles, numbering, htmlPreview,
+            headers, footers, headerElements, footerElements,
+            styles, numbering, htmlPreview, processingCoverage,
             rawText: elements.map(el => el.text).join('\n'),
             wordCount: countWords(elements.map(el => el.text).join(' ')),
             paragraphCount: elements.filter(el => el.type === 'paragraph').length,
@@ -438,12 +488,13 @@ const DocumentParser = (() => {
 
 
     // ==========================================
-    // TABLE PARSING — hashed IDs without indices/substrings
+    // TABLE PARSING — gridSpan, vMerge, recursive nested tables
     // ==========================================
     function parseTable(tblNode, ns, tableIdx) {
         const rows = [];
         let hasActualHeader = false;
         let allCellTexts = [];
+        let hasAnyNestedTable = false;
 
         for (const child of tblNode.children) {
             if (child.localName !== 'tr') continue;
@@ -451,51 +502,71 @@ const DocumentParser = (() => {
             if (trPr && getDirectChild(trPr, ns.w, 'tblHeader')) hasActualHeader = true;
 
             const cells = [];
-            let rowTexts = [];
+            let logicalCol = 0;
             for (const tcChild of child.children) {
                 if (tcChild.localName !== 'tc') continue;
+
+                // Read gridSpan (horizontal merge)
+                const tcPr = getDirectChild(tcChild, ns.w, 'tcPr');
+                let gridSpan = 1;
+                let vMergeType = null;
+                if (tcPr) {
+                    const gsNode = getDirectChild(tcPr, ns.w, 'gridSpan');
+                    if (gsNode) gridSpan = parseInt(gsNode.getAttribute('w:val'), 10) || 1;
+                    const vmNode = getDirectChild(tcPr, ns.w, 'vMerge');
+                    if (vmNode) vMergeType = vmNode.getAttribute('w:val') || 'continue';
+                }
+
+                // Extract cell content
                 const cellParagraphs = [];
                 let cellText = '';
+                let cellHasNested = false;
                 for (const tcContent of tcChild.children) {
                     if (tcContent.localName === 'p') {
                         const pText = extractVisibleText(tcContent, ns);
                         cellParagraphs.push(pText);
                         cellText += pText + ' ';
                     } else if (tcContent.localName === 'tbl') {
-                        cellParagraphs.push('[UGNJEŽDENA TABELA \u2014 sadržaj nije obrađen]');
+                        // Recursively parse nested table
+                        const nestedTable = parseTable(tcContent, ns, tableIdx * 100 + (hasAnyNestedTable ? 1 : 0));
+                        cellHasNested = true;
+                        hasAnyNestedTable = true;
+                        cellParagraphs.push(`[Tabela: ${nestedTable.text}]`);
+                        cellText += nestedTable.text + ' ';
                     }
                 }
                 cellText = cellText.trim();
-                rowTexts.push(cellText);
                 allCellTexts.push(cellText);
-                cells.push({ text: cellText, paragraphs: cellParagraphs,
-                    rowIndex: rows.length, columnIndex: cells.length });
+
+                cells.push({
+                    text: cellText, paragraphs: cellParagraphs,
+                    rowIndex: rows.length, columnIndex: logicalCol,
+                    gridSpan, vMerge: vMergeType,
+                    hasNestedTable: cellHasNested,
+                });
+                logicalCol += gridSpan;
             }
             rows.push(cells);
         }
 
-        // Generate hashed IDs — use occurrence counter for identical content
+        // Generate hashed IDs
         const tableContent = allCellTexts.join('|');
         const rawTableHash = hashId('table', `table|${tableContent}`);
-        // Track how many times this exact table hash has appeared
         if (!parseTable._seen) parseTable._seen = {};
         parseTable._seen[rawTableHash] = (parseTable._seen[rawTableHash] || 0) + 1;
         const tableOccurrence = parseTable._seen[rawTableHash];
         const tableId = tableOccurrence > 1
-            ? hashId('table', `table|${tableContent}|#${tableOccurrence}`)
-            : rawTableHash;
+            ? hashId('table', `table|${tableContent}|#${tableOccurrence}`) : rawTableHash;
 
+        if (!parseTable._seenRows) parseTable._seenRows = {};
         for (let ri = 0; ri < rows.length; ri++) {
             const rowContent = rows[ri].map(c => c.text).join('|');
             const rawRowHash = hashId('table', `${tableId}|row|${rowContent}`);
-            // Track identical rows within this table
-            if (!parseTable._seenRows) parseTable._seenRows = {};
             const rowKey = `${tableId}|${rawRowHash}`;
             parseTable._seenRows[rowKey] = (parseTable._seenRows[rowKey] || 0) + 1;
             const rowOccurrence = parseTable._seenRows[rowKey];
             const rowId = rowOccurrence > 1
-                ? hashId('table', `${tableId}|row|${rowContent}|#${rowOccurrence}`)
-                : rawRowHash;
+                ? hashId('table', `${tableId}|row|${rowContent}|#${rowOccurrence}`) : rawRowHash;
 
             for (let ci = 0; ci < rows[ri].length; ci++) {
                 const cell = rows[ri][ci];
@@ -509,8 +580,10 @@ const DocumentParser = (() => {
             type: 'table', index: tableIdx, tableId, rows,
             text: rows.map(r => r.map(c => c.text).join(' | ')).join('\n'),
             hasHeader: hasActualHeader,
-            columnCount: rows.length > 0 ? rows[0].length : 0,
+            columnCount: rows.length > 0 ? rows[0].reduce((s,c) => s + (c.gridSpan||1), 0) : 0,
             rowCount: rows.length,
+            hasNestedTables: hasAnyNestedTable,
+            hasMergedCells: rows.some(r => r.some(c => c.gridSpan > 1 || c.vMerge)),
         };
     }
 
@@ -788,7 +861,9 @@ const DocumentParser = (() => {
             }
         }
         return { type: 'markdown', name: fileName, elements, footnotes: [], endnotes: [],
-            headers: [], footers: [], styles: {}, numbering: {}, htmlPreview: '',
+            headers: [], footers: [], headerElements: [], footerElements: [],
+            styles: {}, numbering: {}, htmlPreview: '',
+            processingCoverage: { supported: ['paragraphs','headings'], partial: [], unsupported: [] },
             rawText: text, wordCount: countWords(text),
             paragraphCount: elements.filter(e => e.type === 'paragraph').length,
             tableCount: 0, headingCount: elements.filter(e => e.type === 'heading').length };
@@ -807,7 +882,9 @@ const DocumentParser = (() => {
             }
         }
         return { type: 'txt', name: fileName, elements, footnotes: [], endnotes: [],
-            headers: [], footers: [], styles: {}, numbering: {}, htmlPreview: '',
+            headers: [], footers: [], headerElements: [], footerElements: [],
+            styles: {}, numbering: {}, htmlPreview: '',
+            processingCoverage: { supported: ['paragraphs'], partial: [], unsupported: [] },
             rawText: text, wordCount: countWords(text),
             paragraphCount: elements.length, tableCount: 0, headingCount: 0 };
     }

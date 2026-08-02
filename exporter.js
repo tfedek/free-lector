@@ -110,6 +110,7 @@ const Exporter = (() => {
             passed_checks: passedChecks,
             global_patterns: extractGlobalPatterns(findings),
             required_capabilities: requiredCaps,
+            processing_coverage: docMap.processingCoverage || { supported: [], partial: [], unsupported: [] },
         };
     }
 
@@ -264,6 +265,18 @@ const Exporter = (() => {
         lines.push('');
         auditJson.passed_checks.forEach(p => lines.push(`- ${p.area} (${p.count})`));
         lines.push('');
+
+        // Processing coverage
+        if (auditJson.processing_coverage) {
+            const pc = auditJson.processing_coverage;
+            lines.push('## Pokrivenost obrade');
+            lines.push('');
+            if (pc.supported.length > 0) lines.push(`- **Obrađeno:** ${pc.supported.join(', ')}`);
+            if (pc.partial.length > 0) lines.push(`- **Delimično obrađeno:** ${pc.partial.join(', ')}`);
+            if (pc.unsupported.length > 0) lines.push(`- **Nije obrađeno:** ${pc.unsupported.join(', ')}`);
+            lines.push('');
+        }
+
         lines.push('## Završna procena');
         lines.push('');
         lines.push(s.final_assessment);
