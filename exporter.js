@@ -365,9 +365,12 @@ const Exporter = (() => {
         const openBlockers = openFindings.filter(f => f.priority === 'BLOCKER').length;
         const openMandatory = openFindings.filter(f => f.priority === 'OBAVEZNO').length;
         const openVerify = openFindings.filter(f => f.priority === 'PROVERITI').length;
+        const openRecommendations = targetFindings.filter(f => f.priority === 'PREPORUKA' && f.status === 'OPEN').length;
+        s.recommendations_open = openRecommendations;
         s.can_be_marked_final = reqComplete && openBlockers === 0 && openMandatory === 0 && openVerify === 0;
 
-        if (s.can_be_marked_final) s.final_assessment = 'Audit završen. Sve provere prošle.';
+        if (s.can_be_marked_final && openRecommendations === 0) s.final_assessment = 'Audit završen. Sve provere prošle.';
+        else if (s.can_be_marked_final) s.final_assessment = `Nema otvorenih blokirajućih, obaveznih ni nalaza za proveru. Postoji ${openRecommendations} preporuka.`;
         else if (openBlockers === 0 && openMandatory === 0 && openVerify === 0) s.final_assessment = 'Determinističke provere završene. Nedostaju obavezne sposobnosti.';
         else s.final_assessment = `${openMandatory} obaveznih, ${openBlockers} blokirajućih i ${openVerify} za proveru. Nije spreman.`;
 
