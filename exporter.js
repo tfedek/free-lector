@@ -209,8 +209,8 @@ const Exporter = (() => {
             f.globalPattern ? 'Globalno' : '1',
             f.status,
             f.tableId || '', f.rowId || '', f.cellId || '',
-            f.rowIndex != null ? f.rowIndex : '',
-            f.columnIndex != null ? f.columnIndex : '',
+            f.rowIndex != null ? f.rowIndex + 1 : '',
+            f.columnIndex != null ? f.columnIndex + 1 : '',
             '',
         ]);
         const ws2 = XLSX.utils.aoa_to_sheet([findingsHeader, ...findingsRows]);
@@ -278,7 +278,7 @@ const Exporter = (() => {
         auditJson.findings.forEach((f, i) => {
             lines.push(`### ${i+1}. [${f.section}] ${f.category} (${f.priority})`);
             if (f.tableId) {
-                lines.push(`> Tabela: ${f.tableId} | Red: ${f.rowIndex} | Kolona: ${f.columnIndex} | Cell ID: ${f.cellId}`);
+                lines.push(`> Tabela: ${f.tableId} | Red: ${(f.rowIndex != null ? f.rowIndex + 1 : '')} | Kolona: ${(f.columnIndex != null ? f.columnIndex + 1 : '')} | Cell ID: ${f.cellId}`);
             }
             lines.push(`- **Original:** \`${escMd(f.original)}\``);
             lines.push(`- **Ispravka:** \`${escMd(f.replacement)}\``);

@@ -348,19 +348,38 @@ const RuleEngine = (() => {
     // ==========================================
     function checkBrackets(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const pairs = [['(',')'],['[',']'],['{','}']];
+        const openChars = '([{'; const closeChars = ')]}';
         const names = {'(':'obla','[':'uglasta','{':'vitičasta'};
         for (const el of docMap.elements) {
             if (!el.text || !el.text.trim()) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-            for (const [o,c] of pairs) {
-                let depth = 0, positions = [];
-                for (let i = 0; i < el.text.length; i++) {
-                    if (el.text[i] === o) { depth++; positions.push(i); }
-                    else if (el.text[i] === c) { depth--; if (depth < 0) { findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${c}\u201c ili dodati \u201e${o}\u201c]`, rationale: `Zatvorena ${names[o]} zagrada bez otvorene.` })); depth = 0; } }
+            // Stack-based: detects interleaving ([)] and premature closing
+            const stack = [];
+            for (let i = 0; i < el.text.length; i++) {
+                const ch = el.text[i];
+                const openIdx = openChars.indexOf(ch);
+                const closeIdx = closeChars.indexOf(ch);
+                if (openIdx !== -1) {
+                    stack.push({ char: ch, pos: i, type: openIdx });
+                } else if (closeIdx !== -1) {
+                    if (stack.length === 0) {
+                        // Premature close — nothing to match
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.` }));
+                    } else if (stack[stack.length-1].type !== closeIdx) {
+                        // Mismatched: e.g. ( then ]
+                        const top = stack.pop();
+                        const expected = closeChars[top.type];
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(el.text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.` }));
+                    } else {
+                        stack.pop(); // Correct match
+                    }
                 }
-                if (depth > 0) { const p = positions[positions.length-1]; findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, p, 40), replacement: `[dodati \u201e${c}\u201c ili ukloniti \u201e${o}\u201c]`, rationale: `Otvorena ${names[o]} zagrada bez zatvorene.` })); }
+            }
+            // Remaining unclosed
+            for (const item of stack) {
+                const expected = closeChars[item.type];
+                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.` }));
             }
             // ; where ) should be
             const sp = /\([^)]*;(?=[^(]*$)/g; let m;
@@ -625,7 +644,7 @@ const RuleEngine = (() => {
     // ==========================================
     function checkBibliography(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const bibPattern = /^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography|primarni izvori|sekundarni izvori|arhivski izvori|korišćena literatura|spisak literature)$/i;
+        const bibPattern = /^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography|primarni izvori|sekundarni izvori|arhivski izvori|korišćena literatura|spisak literature|библиографија|литература|примарни извори|секундарни извори|архивски извори)$/i;
 
         // Find ALL bibliography headings
         const bibIndices = [];

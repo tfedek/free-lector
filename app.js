@@ -231,7 +231,8 @@
         if (bOpen > 0) addBadge('Blocker: '+bOpen, 'stat-blocker');
         if (mOpen > 0) addBadge('Obavezno: '+mOpen, 'stat-mandatory');
         if (vOpen > 0) addBadge('Proveriti: '+vOpen, 'stat-verify');
-        if (s.recommendations > 0) addBadge('Preporuke: '+s.recommendations, 'stat-recommendation');
+        const rOpen = s.recommendations_open !== undefined ? s.recommendations_open : s.recommendations;
+        if (rOpen > 0) addBadge('Preporuke: '+rOpen, 'stat-recommendation');
         if (s.passed_checks > 0) addBadge('Prošlo: '+s.passed_checks, 'stat-passed');
         // Dynamic final message from scope
         finalAssessmentEl.textContent = s.final_assessment;

@@ -217,6 +217,9 @@ const DocumentParser = (() => {
         if (docContent.includes('c:chart')) {
             processingCoverage.unsupported.push('charts');
         }
+        if (docContent.includes('w:altChunk')) {
+            processingCoverage.unsupported.push('altChunk');
+        }
         if (docContent.includes('w:object') || docContent.includes('o:OLEObject')) {
             processingCoverage.unsupported.push('ole_objects');
         }
