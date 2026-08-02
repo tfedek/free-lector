@@ -336,8 +336,16 @@ const RuleEngine = (() => {
             }
 
             if (options.markdown && docMap.type !== 'markdown') {
-                const mdPats = [/(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, /\[([^\]]+)\]\([^)]+\)/g];
+                const mdPats = [/(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, /\[([^\]]+)\]\([^)]+\)/g, /```/g];
                 for (const re of mdPats) { re.lastIndex=0; let mm; while ((mm=re.exec(text))!==null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Markdown u ${loc}.` })); } }
+            }
+
+            if (options.greek) {
+                const gRe = /[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s,;\u00B7.'"\u0300-\u036F]{2,}/g; let gm;
+                while ((gm = gRe.exec(text)) !== null) {
+                    const snip = gm[0].length > 40 ? gm[0].substring(0,40)+'...' : gm[0];
+                    findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: `Grčki tekst u ${loc} bez prevoda.`, requiresSourceVerification: true }));
+                }
             }
         }
         return findings;

@@ -276,13 +276,13 @@ const Exporter = (() => {
         lines.push('## Nalazi');
         lines.push('');
         auditJson.findings.forEach((f, i) => {
-            lines.push(`### ${i+1}. [${f.section}] ${f.category} (${f.priority})`);
+            lines.push(`### ${i+1}. [${escMd(f.section)}] ${escMd(f.category)} (${f.priority})`);
             if (f.tableId) {
                 lines.push(`> Tabela: ${f.tableId} | Red: ${(f.rowIndex != null ? f.rowIndex + 1 : '')} | Kolona: ${(f.columnIndex != null ? f.columnIndex + 1 : '')} | Cell ID: ${f.cellId}`);
             }
             lines.push(`- **Original:** \`${escMd(f.original)}\``);
             lines.push(`- **Ispravka:** \`${escMd(f.replacement)}\``);
-            lines.push(`- ${f.rationale} (pouzdanost: ${Math.round(f.confidence*100)}%)`);
+            lines.push(`- ${escMd(f.rationale)} (pouzdanost: ${Math.round(f.confidence*100)}%)`);
             lines.push('');
         });
 

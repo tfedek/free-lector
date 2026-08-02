@@ -343,7 +343,13 @@
         const recommendationsOpen = all.filter(f => f.status === 'OPEN' && f.priority === 'PREPORUKA').length;
 
         if (s.can_be_marked_final && recommendationsOpen === 0) {
-            s.final_assessment = 'Audit završen. Sve provere prošle.';
+            const done = s.by_status ? s.by_status.done : 0;
+            const rejected = s.by_status ? s.by_status.rejected : 0;
+            if (done + rejected > 0) {
+                s.final_assessment = `Nema otvorenih nalaza. Rešeno: ${done}. Odbačeno: ${rejected}.`;
+            } else {
+                s.final_assessment = 'Audit završen. Sve provere prošle bez nalaza.';
+            }
         } else if (s.can_be_marked_final) {
             s.final_assessment = `Nema otvorenih blokirajućih, obaveznih ni nalaza za proveru. Postoji ${recommendationsOpen} preporuka.`;
         } else if (s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0) {
