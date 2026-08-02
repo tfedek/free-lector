@@ -248,9 +248,7 @@ const DocumentParser = (() => {
                 ...footers.map(f => f.text),
             ].join(' ')),
             paragraphCount: elements.filter(el => el.type === 'paragraph').length,
-            tableCount: elements.filter(el => el.type === 'table').length +
-                elements.filter(el => el.type === 'table' && el.hasNestedTables).reduce((sum, tbl) =>
-                    sum + tbl.rows.flat().filter(c => c.nestedTables).reduce((s, c) => s + c.nestedTables.length, 0), 0),
+            tableCount: countAllTables(elements),
             headingCount: elements.filter(el => el.type === 'heading').length,
         };
     }
@@ -361,6 +359,7 @@ const DocumentParser = (() => {
         let listInstanceId = null;
         let listStart = null;
         let numFmt = null;
+        let lvlTextPattern = null;
 
         if (numId && numbering && numbering.nums && numbering.nums[numId]) {
             const numDef = numbering.nums[numId];
@@ -379,11 +378,12 @@ const DocumentParser = (() => {
                 }
 
                 numFmt = lvlDef.numFmt || 'decimal';
+                lvlTextPattern = lvlDef.lvlText || `%${level+1}.`;
 
                 // Exclude bullet/none from numeric tracking
                 if (numFmt === 'bullet' || numFmt === 'none') {
                     return buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
-                        headingLevel, numId, numLevel, null, null, null, null, numFmt);
+                        headingLevel, numId, numLevel, null, null, null, null, numFmt, null);
                 }
 
                 const effectiveStart = lvlDef.start ?? 1;
@@ -392,9 +392,7 @@ const DocumentParser = (() => {
                 // Determine list instance lifecycle
                 const prevEl = prevElements.length > 0 ? prevElements[prevElements.length - 1] : null;
                 const prevWasSameNum = prevEl && prevEl.numId === numId;
-                const interrupted = !prevWasSameNum && prevEl &&
-                    (prevEl.type === 'heading' || prevEl.type === 'table' ||
-                     (prevEl.type === 'paragraph' && !prevEl.numId));
+                const interrupted = !prevWasSameNum && prevEl != null;
 
                 // New instance when: first occurrence, interrupted, or numId reappears after different list
                 const instanceKey = numId;
@@ -459,18 +457,18 @@ const DocumentParser = (() => {
 
         return buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
             headingLevel, numId, numLevel, displayedNumber, displayedLabel,
-            listInstanceId, listStart, numFmt);
+            listInstanceId, listStart, numFmt, lvlTextPattern);
     }
 
     function buildParaResult(isHeading, index, paraId, styleName, fullText, runs,
         headingLevel, numId, numLevel, displayedNumber, displayedLabel,
-        listInstanceId, listStart, numFmt) {
+        listInstanceId, listStart, numFmt, lvlTextPattern) {
         return {
             type: isHeading ? 'heading' : 'paragraph',
             index, paraId, style: styleName, text: fullText, runs,
             headingLevel: isHeading ? headingLevel : null,
             numId, numLevel, displayedNumber, displayedLabel,
-            listInstanceId, listStart, numFmt,
+            listInstanceId, listStart, numFmt, lvlTextPattern,
             isEmpty: fullText.trim().length === 0,
             isDirectQuote: false, quoteConfidence: 0,
         };
@@ -597,21 +595,31 @@ const DocumentParser = (() => {
                 let cellDirectText = '';
                 const cellNestedTables = [];
                 let cellHasNested = false;
-                for (const tcContent of tcChild.children) {
-                    if (tcContent.localName === 'p') {
-                        const pText = extractVisibleText(tcContent, ns);
-                        cellParagraphs.push(pText);
-                        cellText += pText + ' ';
-                        cellDirectText += pText + ' ';
-                    } else if (tcContent.localName === 'tbl') {
-                        const nestedTable = parseTable(tcContent, ns, tableIdx * 100 + (hasAnyNestedTable ? 1 : 0));
-                        cellHasNested = true;
-                        hasAnyNestedTable = true;
-                        cellNestedTables.push(nestedTable);
-                        cellParagraphs.push(`[Tabela: ${nestedTable.text}]`);
-                        cellText += nestedTable.text + ' ';
+                function processCellContent(parent) {
+                    for (const tcContent of parent.children) {
+                        if (tcContent.localName === 'p') {
+                            const pText = extractVisibleText(tcContent, ns);
+                            cellParagraphs.push(pText);
+                            cellText += pText + ' ';
+                            cellDirectText += pText + ' ';
+                        } else if (tcContent.localName === 'tbl') {
+                            const nestedTable = parseTable(tcContent, ns, tableIdx * 100 + (hasAnyNestedTable ? 1 : 0));
+                            cellHasNested = true;
+                            hasAnyNestedTable = true;
+                            cellNestedTables.push(nestedTable);
+                            cellParagraphs.push(`[Tabela: ${nestedTable.text}]`);
+                            cellText += nestedTable.text + ' ';
+                        } else if (tcContent.localName === 'sdt') {
+                            const sdtContent = getDirectChild(tcContent, ns.w, 'sdtContent');
+                            if (sdtContent) processCellContent(sdtContent);
+                        } else if (tcContent.localName === 'customXml' || tcContent.localName === 'ins') {
+                            processCellContent(tcContent);
+                        } else if (tcContent.localName === 'del') {
+                            if (trackedChangesMode !== 'accept') processCellContent(tcContent);
+                        }
                     }
                 }
+                processCellContent(tcChild);
                 cellText = cellText.trim();
                 cellDirectText = cellDirectText.trim();
                 allCellTexts.push(cellText);
@@ -1009,6 +1017,7 @@ const DocumentParser = (() => {
     // HASHED IDS — uses w14:paraId or content hash (no absolute index)
     // ==========================================
     function assignHashedIds(docMap) {
+        const seenIds = {};
         for (let i = 0; i < docMap.elements.length; i++) {
             const el = docMap.elements[i];
             if (el.paraId) {
@@ -1020,7 +1029,11 @@ const DocumentParser = (() => {
             const prevText = i > 0 ? (docMap.elements[i-1].text || '').substring(0,30) : '';
             const nextText = i < docMap.elements.length-1 ? (docMap.elements[i+1].text || '').substring(0,30) : '';
             const ctx = `${el.type}|${el.style||''}|${el.text||''}|${prevText}|${nextText}`;
-            el.id = hashId(el.type, ctx);
+            let id = hashId(el.type, ctx);
+            // Dedup: if same ID already used, add occurrence counter
+            seenIds[id] = (seenIds[id] || 0) + 1;
+            if (seenIds[id] > 1) id = hashId(el.type, `${ctx}|#${seenIds[id]}`);
+            el.id = id;
         }
     }
 
@@ -1053,6 +1066,22 @@ const DocumentParser = (() => {
             else if (/^[\u0370-\u03FF\u1F00-\u1FFF\s,.;\u00B7'"]+$/.test(text)) confidence = 0.85;
             if (confidence > 0) { el.isDirectQuote = true; el.quoteConfidence = confidence; }
         }
+    }
+
+    function countAllTables(elements) {
+        let count = 0;
+        for (const el of elements) {
+            if (el.type !== 'table') continue;
+            count++;
+            if (el.rows) {
+                for (const row of el.rows) {
+                    for (const cell of row) {
+                        if (cell.nestedTables) count += cell.nestedTables.reduce((s, nt) => s + countAllTables([nt]), 0);
+                    }
+                }
+            }
+        }
+        return count;
     }
 
     function countWords(text) { return text.split(/\s+/).filter(w => w.length > 0).length; }

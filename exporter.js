@@ -114,6 +114,7 @@ const Exporter = (() => {
                 blockers_total: blockers,
                 verify_open: findings.filter(f => f.priority === 'PROVERITI' && f.status === 'OPEN').length,
                 verify_total: verify,
+                recommendations_open: recommendationsOpen,
                 can_be_marked_final: canBeMarkedFinal,
                 final_assessment: finalAssessment,
             },

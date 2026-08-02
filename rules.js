@@ -637,6 +637,7 @@ const RuleEngine = (() => {
         }
         if (bibIndices.length === 0) return { findings, scannedCount, skippedCount };
 
+        const processedElementIndices = new Set();
         for (const bibIdx of bibIndices) {
 
         const bibHeading = docMap.elements[bibIdx];
@@ -651,7 +652,10 @@ const RuleEngine = (() => {
                 if (hl <= bibLevel) break; // Same or higher level → stop
                 continue; // Lower level subheading → skip but continue
             }
-            if (el.type === 'paragraph' && el.text.trim().length > 10) bibEntries.push(el);
+            if (el.type === 'paragraph' && el.text.trim().length > 10 && !processedElementIndices.has(i)) {
+                bibEntries.push(el);
+                processedElementIndices.add(i);
+            }
         }
         scannedCount += bibEntries.length;
         if (bibEntries.length === 0) continue;

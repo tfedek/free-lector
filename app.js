@@ -178,8 +178,9 @@
             if (seen.has(key)) continue; seen.add(key);
             if (f.confidence < 0.60) continue;
 
-            // Validate original exists — for cell findings, check cell text not table.text
-            if (f.original && !f.globalPattern && f.paragraphId && !f.original.startsWith('[') &&
+            // Validate original exists — skip synthetic/global IDs
+            const isSynthetic = f.paragraphId && (f.paragraphId.startsWith('fn-') || f.paragraphId.startsWith('en-') || f.paragraphId.startsWith('hdr-') || f.paragraphId.startsWith('ftr-') || f.paragraphId.startsWith('doc-'));
+            if (f.original && !f.globalPattern && f.paragraphId && !isSynthetic && !f.original.startsWith('[') &&
                 !f.original.startsWith('TOC:') && !f.original.startsWith('Stavka') &&
                 !f.original.startsWith('Lista') && !f.original.startsWith('Izvor') &&
                 !f.original.startsWith('Citiran')) {
