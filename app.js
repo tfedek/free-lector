@@ -86,6 +86,7 @@
     dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]); });
     fileBtn.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('click', (e) => { if (e.target !== fileBtn) fileInput.click(); });
+    dropZone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
     fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) handleFile(fileInput.files[0]); });
     removeFileBtn.addEventListener('click', () => resetState());
 

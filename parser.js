@@ -232,9 +232,7 @@ const DocumentParser = (() => {
         if (hasMergedCells) processingCoverage.supported.push('merged_cells');
         if (hasNestedTables) processingCoverage.supported.push('nested_tables');
 
-        let htmlPreview = '';
-        try { const r = await mammoth.convertToHtml({ arrayBuffer }); htmlPreview = r.value; }
-        catch (e) { /* non-critical */ }
+        const htmlPreview = ''; // Mammoth removed — preview not used in UI
 
         return {
             type: 'docx', name: fileName, elements, footnotes, endnotes,

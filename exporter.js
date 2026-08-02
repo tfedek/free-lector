@@ -279,8 +279,8 @@ const Exporter = (() => {
             if (f.tableId) {
                 lines.push(`> Tabela: ${f.tableId} | Red: ${f.rowIndex} | Kolona: ${f.columnIndex} | Cell ID: ${f.cellId}`);
             }
-            lines.push(`- **Original:** \`${f.original}\``);
-            lines.push(`- **Ispravka:** \`${f.replacement}\``);
+            lines.push(`- **Original:** \`${escMd(f.original)}\``);
+            lines.push(`- **Ispravka:** \`${escMd(f.replacement)}\``);
             lines.push(`- ${f.rationale} (pouzdanost: ${Math.round(f.confidence*100)}%)`);
             lines.push('');
         });
@@ -382,6 +382,11 @@ const Exporter = (() => {
         a.href = url; a.download = fileName;
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    function escMd(str) {
+        if (!str) return '';
+        return str.replace(/`/g, '\\`').replace(/\n/g, ' ').replace(/\|/g, '\\|');
     }
 
     function extractGlobalPatterns(findings) {
