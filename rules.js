@@ -142,6 +142,7 @@ const RuleEngine = (() => {
                         }
                         const sbp = / +([,.:;!?])/g;
                         while ((m = sbp.exec(text)) !== null) {
+                            if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;
                             const ctx = getContext(text, m.index, 20);
                             findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
                         }
@@ -472,7 +473,7 @@ const RuleEngine = (() => {
             const dbl = /  +/g;
             while ((m = dbl.exec(text)) !== null) { const ctx = getContext(text, m.index, 25); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak.', autoFixable: true })); }
             const sbp = / +([,.:;!?])/g;
-            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/) || b.match(/\d$/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true })); }
+            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/) || b.match(/\d$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;  const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true })); }
             const sbc = / +([)\]}>»\u201C])/g;
             while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true })); }
             const sao = /([(\[{<«\u201E]) +/g;
@@ -807,7 +808,7 @@ const RuleEngine = (() => {
                 const sbp = / +([,.:;!?])/g;
                 while ((m = sbp.exec(text)) !== null) {
                     const b = text.substring(Math.max(0,m.index-5),m.index);
-                    if (b.match(/https?:$/) || b.match(/\d$/)) continue;
+                    if (b.match(/https?:$/) || b.match(/\d$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue; 
                     const ctx = getContext(text, m.index, 20);
                     findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true }));
                 }
@@ -946,6 +947,11 @@ const RuleEngine = (() => {
             if (!el.text || el.type === 'heading' || el.type === 'table') { skippedCount++; continue; }
             // Skip title page (before first heading)
             if (firstHeadingIdx >= 0 && i < firstHeadingIdx) { skippedCount++; continue; }
+            // Skip TOC entries (contain dotted leaders)
+            if (el.text.match(/\.{3,}/)) { skippedCount++; continue; }
+            // Skip paragraphs that are entirely ALL-CAPS (likely section titles without heading style)
+            const trimmed = el.text.trim();
+            if (trimmed.length > 0 && trimmed === trimmed.toUpperCase() && trimmed !== trimmed.toLowerCase()) { skippedCount++; continue; }
             scannedCount++;
             const words = el.text.match(/[\p{L}\p{M}]+/gu) || [];
             for (const word of words) {
