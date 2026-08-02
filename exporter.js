@@ -83,7 +83,7 @@ const Exporter = (() => {
                 name: docMap.name,
                 document_id: documentId,
                 version_id: versionId,
-                language: options.houseStyle || 'sr-Latn',
+                language: detectLanguage(docMap.rawText || ''),
                 word_count: docMap.wordCount,
                 paragraph_count: docMap.paragraphCount,
                 table_count: docMap.tableCount,
@@ -391,6 +391,15 @@ const Exporter = (() => {
     function escMd(str) {
         if (!str) return '';
         return str.replace(/`/g, '\\`').replace(/\n/g, ' ').replace(/\|/g, '\\|');
+    }
+
+    function detectLanguage(text) {
+        const sample = text.substring(0, 5000);
+        const cyrillic = (sample.match(/[\u0400-\u04FF]/g) || []).length;
+        const latin = (sample.match(/[a-zA-Z\u00C0-\u024F]/g) || []).length;
+        if (cyrillic > latin * 2) return 'sr-Cyrl';
+        if (latin > cyrillic * 2) return 'sr-Latn';
+        return 'sr'; // mixed
     }
 
     function extractGlobalPatterns(findings) {

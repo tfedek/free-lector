@@ -342,8 +342,14 @@ const DocumentParser = (() => {
             }
         }
 
-        const isHeading = styleName.match(/^Heading(\d+)$/) ||
+        // Detect headings: inline outlineLvl, standard style names, OR outlineLvl from style definition
+        let isHeading = styleName.match(/^Heading(\d+)$/) ||
             styleName.match(/^Naslov(\d+)$/) || outlineLevel >= 0;
+        // Check style definition for outlineLvl if not already detected
+        if (!isHeading && styles && styles._outlineLevels && styles._outlineLevels[styleName] != null) {
+            outlineLevel = styles._outlineLevels[styleName];
+            isHeading = true;
+        }
         let headingLevel = 0;
         if (isHeading) {
             const match = styleName.match(/(\d+)$/);
@@ -846,13 +852,20 @@ const DocumentParser = (() => {
     function parseStyles(xmlStr, filename, parseXmlStrict) {
         const doc = parseXmlStrict(xmlStr, filename);
         const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        const styles = { _numFromStyle: {}, _basedOn: {} };
+        const styles = { _numFromStyle: {}, _basedOn: {}, _outlineLevels: {} };
         const styleNodes = doc.getElementsByTagNameNS(ns, 'style');
 
         for (const s of styleNodes) {
             const id = s.getAttribute('w:styleId');
             const nameNode = s.getElementsByTagNameNS(ns, 'name')[0];
             if (id && nameNode) styles[id] = nameNode.getAttribute('w:val');
+
+            // Track outlineLvl from style definition
+            const pPrStyle = s.getElementsByTagNameNS(ns, 'pPr')[0];
+            if (pPrStyle && id) {
+                const olvl = pPrStyle.getElementsByTagNameNS(ns, 'outlineLvl')[0];
+                if (olvl) styles._outlineLevels[id] = parseInt(olvl.getAttribute('w:val'), 10);
+            }
 
             // Track basedOn relationships
             const basedOnNode = s.getElementsByTagNameNS(ns, 'basedOn')[0];
