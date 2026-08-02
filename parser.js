@@ -158,16 +158,7 @@ const DocumentParser = (() => {
                 }
             }
             // Fallback: if no w:headerReference found in doc, use rels directly (for compat)
-            if (refIds.size === 0) {
-                const relEntries = relsContent.match(/<Relationship[^>]+>/gi) || [];
-                for (const rel of relEntries) {
-                    const typeMatch = rel.match(/Type="[^"]*\/(header|footer)"/i);
-                    const targetMatch = rel.match(/Target="([^"]+)"/i);
-                    if (typeMatch && targetMatch) {
-                        linkedParts.add('word/' + targetMatch[1]);
-                    }
-                }
-            }
+            // No fallback — only load headers/footers explicitly referenced via w:headerReference
         }
         const hasLinkedParts = linkedParts.size > 0;
         for (const path of Object.keys(zip.files)) {
@@ -205,9 +196,13 @@ const DocumentParser = (() => {
         // Track unsupported/partially-supported elements
         const processingCoverage = {
             supported: ['paragraphs', 'headings', 'tables', 'numbering', 'styles', 'tracked_changes'],
-            partial: ['footnotes', 'endnotes', 'headers', 'footers'],
+            partial: [],
             unsupported: [],
         };
+        if (footnotes.length > 0) processingCoverage.partial.push('footnotes');
+        if (endnotes.length > 0) processingCoverage.partial.push('endnotes');
+        if (headers.length > 0) processingCoverage.partial.push('headers');
+        if (footers.length > 0) processingCoverage.partial.push('footers');
 
         // Check for textboxes, shapes, equations, charts in document XML
         if (docContent.includes('w:txbxContent') || docContent.includes('wps:txbx')) {

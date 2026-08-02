@@ -114,13 +114,12 @@
         const options = {};
         document.querySelectorAll('[data-check]').forEach(cb => { options[cb.dataset.check] = cb.checked; });
         options.auditMode = document.querySelector('input[name="audit-mode"]:checked').value;
-        options.houseStyle = document.getElementById('house-style').value;
 
         // Mode override (in case user manually changed checkboxes back)
         const mode = options.auditMode;
         if (MODE_CHECKS[mode]) {
             for (const key of Object.keys(options)) {
-                if (key !== 'auditMode' && key !== 'houseStyle' && !MODE_CHECKS[mode].has(key)) {
+                if (key !== 'auditMode' && !MODE_CHECKS[mode].has(key)) {
                     options[key] = false;
                 }
             }
@@ -339,8 +338,12 @@
         const reqComplete = reqCaps.every(cap => scope[cap] === true);
         s.can_be_marked_final = reqComplete && s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0;
 
-        if (s.can_be_marked_final) {
+        const recommendationsOpen = all.filter(f => f.status === 'OPEN' && f.priority === 'PREPORUKA').length;
+
+        if (s.can_be_marked_final && recommendationsOpen === 0) {
             s.final_assessment = 'Audit završen. Sve provere prošle.';
+        } else if (s.can_be_marked_final) {
+            s.final_assessment = `Nema otvorenih blokirajućih, obaveznih ni nalaza za proveru. Postoji ${recommendationsOpen} preporuka.`;
         } else if (s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0) {
             const missing = [];
             if (!scope.grammar) missing.push('gramatika');

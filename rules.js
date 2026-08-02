@@ -92,7 +92,7 @@ const RuleEngine = (() => {
             if (!result) continue;
 
             // Check if any extra source (cells, headers/footers, footnotes) produced findings in this category
-            const categoryMap = { spacing: 'Razmaci', brackets: 'Zagrade', scriptMix: 'Mešanje pisama', quotes: 'Tipografija', duplicates: 'Duple reči', urls: 'URL' };
+            const categoryMap = { spacing: 'Razmaci', brackets: 'Zagrade', scriptMix: 'Mešanje pisama', quotes: 'Tipografija', duplicates: 'Duple reči', urls: 'URL', markdown: 'Markdown artefakt', greek: 'Grčki bez prevoda' };
             const cat = categoryMap[check.key];
             const hasExtraFindings = cat ? (
                 allExtraFindings.some(f => f.category === cat) ||
@@ -186,7 +186,7 @@ const RuleEngine = (() => {
                     // Per-cell: duplicate words
                     if (options.duplicates) {
                         const allowedDups = new Set(['ha','da','ne','vrlo','još','baš','sve']);
-                        const dupRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let dm;
+                        const dupRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let dm;
                         while ((dm = dupRe.exec(text)) !== null) {
                             if (allowedDups.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
                             findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč \u201e${dm[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
@@ -320,7 +320,7 @@ const RuleEngine = (() => {
             }
 
             if (options.duplicates) {
-                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let dm;
+                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let dm;
                 const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
                 while ((dm = dupeRe.exec(text)) !== null) {
                     if (allowed.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
@@ -513,7 +513,7 @@ const RuleEngine = (() => {
             if (!el.text) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-            const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let m;
+            const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let m;
             while ((m = re.exec(el.text)) !== null) {
                 if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
                 findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
@@ -667,7 +667,7 @@ const RuleEngine = (() => {
             const isReligious = text.match(/\b(Biblija|Bible|Sveto Pismo|Quran|Talmud|Torah)\b/i);
 
             if (!isAncient && !isElectronic && !isReligious) {
-                if (!text.match(/\b(1[5-9]\d{2}|20\\d{2})\b/)) {
+                if (!text.match(/\b(1[5-9]\d{2}|20\d{2})\b/)) {
                     findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
                 }
                 if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i) &&
@@ -806,7 +806,7 @@ const RuleEngine = (() => {
             }
 
             if (options.duplicates) {
-                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu;
+                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu;
                 const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
                 let md;
                 while ((md = dupeRe.exec(text)) !== null) {
