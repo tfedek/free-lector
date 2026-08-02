@@ -268,6 +268,7 @@ const RuleEngine = (() => {
     // HEADERS/FOOTERS - run basic checks on header/footer text
     // ==========================================
     function checkHeadersFooters(docMap, options) {
+        if (!options.headersFooters) return [];
         const findings = [];
         const hfElements = [
             ...(docMap.headerElements || []),
@@ -786,10 +787,16 @@ const RuleEngine = (() => {
             const noteType = isFootnote ? 'Fusnota' : 'Endnota';
             const noteEl = { id: `${isFootnote?'fn':'en'}-${note.id}`, type: isFootnote?'footnote':'endnote', text: note.text, section: `(${noteType.toLowerCase()} ${note.id})`, isDirectQuote: false };
 
-            if (note.isEmpty) {
+            // Empty note detection - gated by emptyNotes option
+            if (options.emptyNotes && note.isEmpty) {
                 findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} - prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.` }));
                 continue;
             }
+
+            if (note.isEmpty) continue;
+
+            // Note content checks - gated by noteContentChecks master option
+            if (!options.noteContentChecks) continue;
 
             const text = note.text;
 

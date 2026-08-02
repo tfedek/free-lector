@@ -42,39 +42,52 @@
     const exportFilter = document.getElementById('export-filter');
 
     // ==========================================
-    // MODE → CHECKBOX SYNC
-    // When mode changes, visually check/uncheck and disable/enable checkboxes
+    // PRESET SYSTEM
     // ==========================================
-    const modeRadios = document.querySelectorAll('input[name="audit-mode"]');
-    const MODE_CHECKS = {
-        FULL_AUDIT: null, // all enabled
-        PROOFREADING: new Set(['brackets','quotes','spacing','scriptMix','duplicates']),
-        BIBLIOGRAPHY: new Set(['bibliography','brackets','spacing']),
+    let activePreset = 'basic';
+    let applyingPreset = false;
+
+    const BASIC_PRESET = {
+        brackets: true, spacing: true, scriptMix: true, duplicates: true, quotes: true,
+        emptyNotes: true, noteContentChecks: false, footnotes: true,
+        toc: false, bibliography: false, capsWords: false, numbering: false,
+        greek: false, markdown: false, urls: false, emptyHeadings: false, repetition: false,
+        headersFooters: false
+    };
+    const FULL_PRESET = {
+        brackets: true, spacing: true, scriptMix: true, duplicates: true, quotes: true,
+        emptyNotes: true, noteContentChecks: true, footnotes: true,
+        toc: true, bibliography: true, capsWords: true, numbering: true,
+        greek: true, markdown: true, urls: true, emptyHeadings: true, repetition: true,
+        headersFooters: true
     };
 
-    modeRadios.forEach(radio => {
-        radio.addEventListener('change', () => syncCheckboxesToMode(radio.value));
-    });
-
-    // Default checked state from HTML (stored on load)
-    const defaultCheckedState = {};
-    document.querySelectorAll('[data-check]').forEach(cb => {
-        defaultCheckedState[cb.dataset.check] = cb.checked;
-    });
-
-    function syncCheckboxesToMode(mode) {
-        const allowed = MODE_CHECKS[mode];
+    function applyPreset(name) {
+        applyingPreset = true;
+        const preset = name === 'full' ? FULL_PRESET : BASIC_PRESET;
         document.querySelectorAll('[data-check]').forEach(cb => {
-            if (allowed === null) {
-                // FULL_AUDIT: restore HTML defaults and enable all
-                cb.checked = defaultCheckedState[cb.dataset.check] ?? true;
-                cb.disabled = false;
-            } else {
-                const isAllowed = allowed.has(cb.dataset.check);
-                cb.checked = isAllowed; cb.disabled = !isAllowed;
-            }
+            const key = cb.dataset.check;
+            if (key in preset) { cb.checked = preset[key]; cb.disabled = (name === 'basic' && !preset[key]); }
         });
+        const radio = document.querySelector(`input[name="audit-mode"][value="${name === 'full' ? 'FULL_AUDIT' : 'PROOFREADING'}"]`);
+        if (radio) radio.checked = true;
+        activePreset = name;
+        applyingPreset = false;
     }
+
+    const modeRadios = document.querySelectorAll('input[name="audit-mode"]');
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.value === 'FULL_AUDIT') applyPreset('full');
+            else applyPreset('basic');
+        });
+    });
+
+    document.querySelectorAll('[data-check]').forEach(cb => {
+        cb.addEventListener('change', () => { if (!applyingPreset) activePreset = 'custom'; });
+    });
+
+    applyPreset('basic');
 
 
     // ==========================================
@@ -113,16 +126,7 @@
         const options = {};
         document.querySelectorAll('[data-check]').forEach(cb => { options[cb.dataset.check] = cb.checked; });
         options.auditMode = document.querySelector('input[name="audit-mode"]:checked').value;
-
-        // Mode override (in case user manually changed checkboxes back)
-        const mode = options.auditMode;
-        if (MODE_CHECKS[mode]) {
-            for (const key of Object.keys(options)) {
-                if (key !== 'auditMode' && !MODE_CHECKS[mode].has(key)) {
-                    options[key] = false;
-                }
-            }
-        }
+        options.preset = activePreset;
 
         document.getElementById('upload-section').classList.add('hidden');
         progressSection.classList.remove('hidden');

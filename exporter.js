@@ -25,6 +25,7 @@ const Exporter = (() => {
 
         // Dynamic scope from actual options
         const scope = {
+            preset: options.preset || 'basic',
             proofreading: hasAnyProofreadingCheck(options),
             grammar: options.aiGrammar === true,
             style: options.aiStyle === true,

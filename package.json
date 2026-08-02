@@ -6,7 +6,9 @@
   "scripts": {
     "test": "node test.js",
     "fuzz": "node test/fuzz.js",
-    "fuzz:nightly": "FUZZ_CASES=10000 node test/fuzz.js"
+    "fuzz:nightly": "FUZZ_CASES=10000 node test/fuzz.js",
+    "evaluate:confidence": "node evaluation/evaluate-confidence.js",
+    "evaluate:sample-size": "node evaluation/sample-size.js"
   },
   "repository": {
     "type": "git",

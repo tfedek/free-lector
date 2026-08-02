@@ -67,13 +67,6 @@
                             <span>Samo pouzdane provere (zagrade, razmaci, duple reči, mešanje pisama)</span>
                         </div>
                     </label>
-                    <label class="mode-option">
-                        <input type="radio" name="audit-mode" value="BIBLIOGRAPHY">
-                        <div class="mode-card">
-                            <strong>Bibliografija</strong>
-                            <span>Format, doslednost, podudarnost</span>
-                        </div>
-                    </label>
                 </div>
                 <p class="mode-warning">Ovaj režim ne proverava kompletnu gramatiku, sintaksu, stil niti izgled stranica.</p>
 
@@ -94,7 +87,11 @@
                     <label><input type="checkbox" data-check="repetition" checked> Ponovljeni pasusi</label>
                     <label><input type="checkbox" data-check="capsWords" checked> ALL-CAPS reči u tekstu</label>
                     <label><input type="checkbox" data-check="emptyHeadings" checked> Prazni naslovi</label>
+                    <label><input type="checkbox" data-check="headersFooters" checked> Zaglavlja i podnožja</label>
                 </div>
+                <!-- Hidden preset-controlled options -->
+                <input type="checkbox" data-check="emptyNotes" checked hidden aria-hidden="true">
+                <input type="checkbox" data-check="noteContentChecks" hidden aria-hidden="true">
 
                 <div class="options-footer">
                     <button id="run-btn" class="btn btn-primary btn-large">Pokreni audit</button>

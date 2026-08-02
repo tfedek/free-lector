@@ -65,7 +65,7 @@ function makeDocMap(elements, opts = {}) {
         tableCount: mapped.filter(e=>e.type==='table').length,
         headingCount: mapped.filter(e=>e.type==='heading').length };
 }
-function allOpts() { return {brackets:true,quotes:true,markdown:true,spacing:true,scriptMix:true,greek:true,duplicates:true,toc:true,numbering:true,bibliography:true,urls:true,footnotes:true,repetition:true,capsWords:true,emptyHeadings:true}; }
+function allOpts() { return {brackets:true,quotes:true,markdown:true,spacing:true,scriptMix:true,greek:true,duplicates:true,toc:true,numbering:true,bibliography:true,urls:true,footnotes:true,repetition:true,capsWords:true,emptyHeadings:true,emptyNotes:true,noteContentChecks:true,headersFooters:true}; }
 
 /** Helper: create minimal DOCX ZIP as ArrayBuffer */
 async function createDocxZip(documentXml, extras = {}) {
@@ -663,7 +663,7 @@ testAsync('header with double space produces finding', async () => {
     const file = { name: 't.docx', arrayBuffer: async()=>buf };
     const result = await DocumentParser.parse(file);
     assert(result.headerElements.length >= 1, 'Should have header elements');
-    const {findings} = RuleEngine.runAudit(result, {spacing:true});
+    const {findings} = RuleEngine.runAudit(result, {spacing:true, headersFooters:true});
     const hdrFindings = findings.filter(f=>f.section&&f.section.includes('zaglavlje'));
     assert(hdrFindings.length >= 1, 'Should detect double space in header');
 });
@@ -682,7 +682,7 @@ testAsync('footnote with bracket error detected via full parse', async () => {
     const buf = await zip.generateAsync({ type: 'arraybuffer' });
     const file = { name: 't.docx', arrayBuffer: async()=>buf };
     const result = await DocumentParser.parse(file);
-    const {findings} = RuleEngine.runAudit(result, {footnotes:true,brackets:true});
+    const {findings} = RuleEngine.runAudit(result, {footnotes:true,brackets:true,emptyNotes:true,noteContentChecks:true});
     assert(findings.some(f=>f.category==='Zagrade'&&f.section.includes('fusnot')), 'Should find bracket error in footnote');
 });
 
@@ -728,7 +728,7 @@ test('disabled spacing does not produce spacing findings in footnotes', () => {
 
 test('footnote spacing finding prevents Razmaci from being in passedChecks', () => {
     const doc = makeDocMap([{text:'Clean body.'}], {footnotes:[{id:'1', text:'Fn  double.', isEmpty:false}]});
-    const {findings, passedChecks} = RuleEngine.runAudit(doc, {spacing:true, footnotes:true});
+    const {findings, passedChecks} = RuleEngine.runAudit(doc, {spacing:true, footnotes:true, emptyNotes:true, noteContentChecks:true});
     assert(findings.some(f=>f.category==='Razmaci'), 'Should have spacing finding');
     const spacingPassed = passedChecks.find(p=>p.area==='Razmaci i interpunkcija');
     assert(!spacingPassed, 'Spacing should NOT be passed when footnote has error');
@@ -737,7 +737,7 @@ test('footnote spacing finding prevents Razmaci from being in passedChecks', () 
 test('header finding prevents spacing from passing', () => {
     const doc = makeDocMap([{text:'Clean.'}]);
     doc.headerElements = [{type:'header', index:0, text:'Hdr  dbl.', style:'Header', runs:[{text:'Hdr  dbl.'}], id:'hdr-0', section:'(zaglavlje)', isEmpty:false, isDirectQuote:false, quoteConfidence:0, paraId:null}];
-    const {findings, passedChecks} = RuleEngine.runAudit(doc, {spacing:true});
+    const {findings, passedChecks} = RuleEngine.runAudit(doc, {spacing:true, headersFooters:true});
     assert(findings.some(f=>f.category==='Razmaci'&&f.section.includes('zaglavlje')));
     const spacingPassed = passedChecks.find(p=>p.area==='Razmaci i interpunkcija');
     assert(!spacingPassed, 'Spacing not passed when header has error');
@@ -829,7 +829,7 @@ test('detects Cyrillic "је је"', () => {
 section('\nCitat u fusnoti:');
 test('footnote with quoted content gets PROVERITI', () => {
     const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'\u201eOvo je citat  sa duplim razmakom.\u201c', isEmpty:false}]});
-    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, spacing:true});
+    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, spacing:true, emptyNotes:true, noteContentChecks:true});
     const fnFindings = findings.filter(f=>f.section.includes('fusnot')&&f.category==='Razmaci');
     assert(fnFindings.length >= 1, 'Should detect spacing in quoted footnote');
     assert.strictEqual(fnFindings[0].priority, 'PROVERITI', 'Quoted footnote → PROVERITI');
@@ -908,14 +908,14 @@ test(')( in cell detected', () => {
 });
 test(')( in footnote detected', () => {
     const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'tekst )( greška', isEmpty:false}]});
-    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, brackets:true});
+    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, brackets:true, emptyNotes:true, noteContentChecks:true});
     const bf = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('fusnot'));
     assert(bf.length >= 1, 'Should detect )( in footnote');
 });
 test(')( in header detected', () => {
     const doc = makeDocMap([{text:'Body.'}]);
     doc.headerElements = [{type:'header',index:0,text:'hdr )( err',style:'Header',runs:[{text:'hdr )( err'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
-    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true, headersFooters:true});
     const bf = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('zaglavlje'));
     assert(bf.length >= 1, 'Should detect )( in header');
 });
@@ -1004,6 +1004,121 @@ testAsync('header without w:headerReference skipped when rels+refs exist', async
     const result = await DocumentParser.parse(file);
     assert.strictEqual(result.headers.length, 1);
     assert(result.headers[0].text.includes('Referenced'));
+});
+
+// ==========================================
+// PRESET REGRESSION TESTS (A.6)
+// ==========================================
+section('\nPreset regresija:');
+
+test('basic preset: brackets enabled', () => {
+    const doc = makeDocMap([{text:'Tekst (bez zatvaranja'}]);
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    if (opts.emptyNotes === undefined) opts.emptyNotes = true;
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Zagrade'), 'Basic preset should detect brackets');
+});
+
+test('basic preset: bibliography disabled', () => {
+    const doc = makeDocMap([{type:'heading',text:'Bibliografija',headingLevel:1},{text:'Petrović, Milan. Lingvistička analiza srpskog. Beograd'}]);
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    if (opts.emptyNotes === undefined) opts.emptyNotes = true;
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(!findings.some(f=>f.category==='Bibliografija'), 'Basic preset should NOT check bibliography');
+});
+
+test('basic preset: headersFooters disabled', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Hdr  dbl.',style:'Header',runs:[{text:'Hdr  dbl.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(!findings.some(f=>f.section&&f.section.includes('zaglavlje')), 'Basic preset should NOT check headers');
+});
+
+test('basic preset: noteContentChecks disabled', () => {
+    const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'Fn  double.', isEmpty:false}]});
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const fnSpacing = findings.filter(f=>f.category==='Razmaci'&&f.section.includes('fusnot'));
+    assert.strictEqual(fnSpacing.length, 0, 'Basic preset should NOT check footnote content');
+});
+
+test('basic preset: emptyNotes enabled', () => {
+    const doc = makeDocMap([{text:'T.'}], {footnotes:[{id:'1',text:'',isEmpty:true}]});
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Fusnote'), 'Basic preset should detect empty notes');
+});
+
+test('full preset: bibliography enabled', () => {
+    const doc = makeDocMap([{type:'heading',text:'Bibliografija',headingLevel:1},{text:'Petrović, Milan. Lingvistička analiza srpskog. Beograd'}]);
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Bibliografija'), 'Full preset should check bibliography');
+});
+
+test('full preset: headersFooters enabled', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Hdr  dbl.',style:'Header',runs:[{text:'Hdr  dbl.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.section&&f.section.includes('zaglavlje')), 'Full preset should check headers');
+});
+
+test('full preset: noteContentChecks enabled', () => {
+    const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'Fn  double.', isEmpty:false}]});
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const fnSpacing = findings.filter(f=>f.category==='Razmaci'&&f.section.includes('fusnot'));
+    assert(fnSpacing.length >= 1, 'Full preset should check footnote content');
+});
+
+test('full preset: toc enabled', () => {
+    const doc = makeDocMap([{type:'heading',text:'Uvod',headingLevel:1},{text:'Poglavlje.....5'}]);
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    // TOC entry "Poglavlje" doesn't match heading "Uvod" → should produce finding
+    assert(findings.some(f=>f.category==='TOC/naslovi'), 'Full preset should check TOC');
+});
+
+test('full preset: greek enabled', () => {
+    const doc = makeDocMap([{text:'\u03C4\u1F78\u03BD \u039A\u03AC\u03B4\u03BC\u03BF\u03BD \u1F10\u03BB\u03B8\u03B5\u1FD6\u03BD.'}]);
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Grčki bez prevoda'), 'Full preset should check Greek');
+});
+
+test('basic preset: greek disabled', () => {
+    const doc = makeDocMap([{text:'\u03C4\u1F78\u03BD \u039A\u03AC\u03B4\u03BC\u03BF\u03BD \u1F10\u03BB\u03B8\u03B5\u1FD6\u03BD.'}]);
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(!findings.some(f=>f.category==='Grčki bez prevoda'), 'Basic preset should NOT check Greek');
+});
+
+test('exporter scope.preset reflects active preset', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const j = Exporter.buildAuditJson(doc, [], [], {preset:'full', brackets:true});
+    assert.strictEqual(j.scope.preset, 'full');
+});
+
+test('exporter scope.preset defaults to basic', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const j = Exporter.buildAuditJson(doc, [], [], {brackets:true});
+    assert.strictEqual(j.scope.preset, 'basic');
+});
+
+test('basic preset: spacing enabled', () => {
+    const doc = makeDocMap([{text:'Dva  razmaka.'}]);
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Razmaci'), 'Basic preset should check spacing');
+});
+
+test('basic preset: duplicates enabled', () => {
+    const doc = makeDocMap([{text:'On je je stigao.'}]);
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Duple reči'), 'Basic preset should check duplicates');
 });
 
 // ==========================================
