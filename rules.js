@@ -178,13 +178,29 @@ const RuleEngine = (() => {
                     if (cellIsQuote) {
                         for (const f of findings) {
                             if (f.cellId === cell.cellId && f.priority !== 'PROVERITI') {
-                                f.priority = 'PROVERITI'; f.autoFixable = false; f.requiresSourceVerification = true;
+                                f.priority = 'PROVERITI'; f.autoFixable = false; f.requiresSourceVerification = true; f.isDirectQuote = true;
                             }
                         }
                     }
                 }
             }
         }
+
+        // Recursively check nested tables
+        for (const el of docMap.elements) {
+            if (el.type !== 'table' || !el.rows) continue;
+            for (const row of el.rows) {
+                for (const cell of row) {
+                    if (!cell.nestedTables) continue;
+                    for (const nestedTbl of cell.nestedTables) {
+                        const nestedDoc = { elements: [nestedTbl], type: 'docx', footnotes: [], endnotes: [], headerElements: [], footerElements: [] };
+                        const nf = checkTableCells(nestedDoc, options);
+                        findings.push(...nf);
+                    }
+                }
+            }
+        }
+
         return findings;
     }
 
@@ -402,7 +418,7 @@ const RuleEngine = (() => {
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             scannedCount++;
-            const re = /\b(\p{L}+)\s+\1\b/giu; let m;
+            const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let m;
             while ((m = re.exec(el.text)) !== null) {
                 if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
                 findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
@@ -614,6 +630,10 @@ const RuleEngine = (() => {
 
             const text = note.text;
 
+            // Detect if footnote content is a direct quote
+            const fnIsQuote = /^\u201E[\s\S]*\u201C$/.test(text.trim()) ||
+                /^\u00AB[\s\S]*\u00BB$/.test(text.trim());
+
             // Only run sub-checks that are enabled in options
             if (options.spacing) {
                 const dbl = /  +/g; let m;
@@ -651,7 +671,7 @@ const RuleEngine = (() => {
             }
 
             if (options.duplicates) {
-                const dupeRe = /\b(\p{L}+)\s+\1\b/giu;
+                const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu;
                 const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
                 let md;
                 while ((md = dupeRe.exec(text)) !== null) {
@@ -667,6 +687,16 @@ const RuleEngine = (() => {
                     const url = mu[0];
                     if (url.match(/[,.;]+$/)) {
                         findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.` }));
+                    }
+                }
+            }
+
+            // Apply direct quote protection to footnote findings
+            if (fnIsQuote) {
+                for (const f of findings) {
+                    if (f.paragraphId === noteEl.id && f.priority !== 'PROVERITI') {
+                        f.priority = 'PROVERITI'; f.autoFixable = false;
+                        f.requiresSourceVerification = true; f.isDirectQuote = true;
                     }
                 }
             }

@@ -53,13 +53,17 @@ const Exporter = (() => {
         const requiredCaps = options.requiredCapabilities || DEFAULT_REQUIRED_CAPABILITIES;
         const requiredComplete = requiredCaps.every(cap => scope[cap] === true);
 
+        const blockersOpen = findings.filter(f => f.priority === 'BLOCKER' && f.status === 'OPEN').length;
+        const mandatoryOpen = findings.filter(f => f.priority === 'OBAVEZNO' && f.status === 'OPEN').length;
+        const verifyOpen = findings.filter(f => f.priority === 'PROVERITI' && f.status === 'OPEN').length;
+
         const canBeMarkedFinal = requiredComplete &&
-            blockers === 0 && mandatory === 0 && verify === 0;
+            blockersOpen === 0 && mandatoryOpen === 0 && verifyOpen === 0;
 
         let finalAssessment;
         if (canBeMarkedFinal) {
             finalAssessment = 'Audit je završen. Sve provere su prošle bez nalaza.';
-        } else if (blockers === 0 && mandatory === 0 && verify === 0) {
+        } else if (blockersOpen === 0 && mandatoryOpen === 0 && verifyOpen === 0) {
             finalAssessment = `Determinističke provere su završene. Nedostaje: ${missingParts.join(', ') || 'ništa'}.`;
         } else {
             finalAssessment = `Dokument ima ${mandatory} obaveznih ispravki i ${blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
@@ -360,8 +364,8 @@ const Exporter = (() => {
         s.can_be_marked_final = reqComplete && openBlockers === 0 && openMandatory === 0 && openVerify === 0;
 
         if (s.can_be_marked_final) s.final_assessment = 'Audit završen. Sve provere prošle.';
-        else if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) s.final_assessment = 'Determinističke provere završene. Nedostaju obavezne sposobnosti.';
-        else s.final_assessment = `${s.mandatory} obaveznih, ${s.blockers} blokirajućih. Nije spreman.`;
+        else if (openBlockers === 0 && openMandatory === 0 && openVerify === 0) s.final_assessment = 'Determinističke provere završene. Nedostaju obavezne sposobnosti.';
+        else s.final_assessment = `${openMandatory} obaveznih, ${openBlockers} blokirajućih otvoreno. Nije spreman.`;
 
         filtered.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
         filtered.global_patterns = extractGlobalPatterns(targetFindings);

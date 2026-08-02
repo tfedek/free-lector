@@ -797,6 +797,101 @@ testAsync('ZIP with high compression ratio rejected before full decompress', asy
 });
 
 // ==========================================
+// REGRESSION: buildAuditJson gate with only DONE findings
+// ==========================================
+section('\nGate regresija:');
+test('buildAuditJson with all-DONE findings and full caps gives final=true', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-1',category:'A',priority:'OBAVEZNO',confidence:0.9,original:'x',replacement:'y',rationale:'r',status:'DONE',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-1',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {aiGrammar:true,visualLayout:true,aiStyle:true,spacing:true});
+    assert.strictEqual(json.summary.can_be_marked_final, true, 'All DONE + caps → final');
+    assert.strictEqual(json.summary.mandatory_open, 0);
+    assert.strictEqual(json.summary.mandatory_total, 1);
+});
+
+// ==========================================
+// REGRESSION: Cyrillic "је је" dupe detection
+// ==========================================
+section('\nĆirilička duple reči:');
+test('detects Cyrillic "је је"', () => {
+    const doc = makeDocMap([{text:'Кадмо је је стигао у Илирију.'}]);
+    const {findings} = RuleEngine.runAudit(doc, {duplicates:true});
+    const dupes = findings.filter(f=>f.category==='Duple reči');
+    assert(dupes.length >= 1, 'Should detect "је је"');
+    assert.strictEqual(dupes[0].replacement, 'је');
+});
+
+// ==========================================
+// REGRESSION: quote in footnote
+// ==========================================
+section('\nCitat u fusnoti:');
+test('footnote with quoted content gets PROVERITI', () => {
+    const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'\u201eOvo je citat  sa duplim razmakom.\u201c', isEmpty:false}]});
+    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, spacing:true});
+    const fnFindings = findings.filter(f=>f.section.includes('fusnot')&&f.category==='Razmaci');
+    assert(fnFindings.length >= 1, 'Should detect spacing in quoted footnote');
+    assert.strictEqual(fnFindings[0].priority, 'PROVERITI', 'Quoted footnote → PROVERITI');
+    assert.strictEqual(fnFindings[0].isDirectQuote, true);
+});
+
+// ==========================================
+// REGRESSION: vMerge chain break by ordinary cell
+// ==========================================
+section('\nvMerge prekid:');
+testAsync('ordinary cell breaks vMerge chain', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Top</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Normal</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>New merge</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = {name:'t.docx', arrayBuffer:async()=>buf};
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e=>e.type==='table');
+    // Row 2 (index 2) is ordinary — no vMerge, no vMergeOrigin
+    assert(!tbl.rows[2][0].vMerge, 'Ordinary cell should have no vMerge');
+    assert(!tbl.rows[2][0].vMergeOrigin, 'Ordinary cell should break chain');
+    // Row 3 starts new merge
+    assert.strictEqual(tbl.rows[3][0].vMerge, 'restart');
+});
+
+// ==========================================
+// REGRESSION: unlinked header not loaded
+// ==========================================
+section('\nNepovezan header:');
+testAsync('unlinked header not loaded when rels exist', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`;
+    const relsXml = `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>`;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', docXml);
+    zip.file('word/_rels/document.xml.rels', relsXml);
+    zip.file('word/header1.xml', '<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Linked</w:t></w:r></w:p></w:hdr>');
+    zip.file('word/header99.xml', '<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Unlinked</w:t></w:r></w:p></w:hdr>');
+    const buf = await zip.generateAsync({type:'arraybuffer'});
+    const file = {name:'t.docx', arrayBuffer:async()=>buf};
+    const result = await DocumentParser.parse(file);
+    assert.strictEqual(result.headers.length, 1, 'Only linked header loaded');
+    assert(result.headers[0].text.includes('Linked'));
+});
+
+// ==========================================
+// REGRESSION: real ZIP ratio rejection
+// ==========================================
+section('\nZIP ratio odbijanje:');
+testAsync('ZIP with extreme compression ratio rejected', async () => {
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>OK</w:t></w:r></w:p></w:body></w:document>');
+    // Create a highly compressible file (110MB of repeated zeros when decompressed)
+    // This exceeds MAX_UNCOMPRESSED_SIZE (100MB)
+    const bigData = Buffer.alloc(5 * 1024 * 1024, 0); // 5MB of zeros → extremely high compression ratio
+    zip.file('word/media/bomb.bin', bigData, {compression:'DEFLATE'});
+    const buf = await zip.generateAsync({type:'arraybuffer'});
+    const file = {name:'t.docx', arrayBuffer:async()=>buf};
+    let threw = false;
+    try { await DocumentParser.parse(file); }
+    catch (e) { threw = true; assert(e.message.includes('prelazi') || e.message.includes('bomb') || e.message.includes('odnos'), `Error: ${e.message}`); }
+    assert(threw, 'Should reject oversized ZIP');
+});
+
+// ==========================================
 // SUMMARY — run async tests then report
 // ==========================================
 

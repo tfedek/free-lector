@@ -134,12 +134,22 @@ const DocumentParser = (() => {
         const endnotes = enContent ? parseEndnotes(enContent, 'word/endnotes.xml', parseXmlStrict) : [];
 
         let headers = [], footers = [];
+        // Only load headers/footers referenced in document relationships
+        const relsContent = await loadEntry('word/_rels/document.xml.rels');
+        const linkedParts = new Set();
+        if (relsContent) {
+            const relsMatches = relsContent.match(/Target="(header\d+\.xml|footer\d+\.xml)"/gi) || [];
+            relsMatches.forEach(m => {
+                const target = m.match(/Target="([^"]+)"/i);
+                if (target) linkedParts.add('word/' + target[1]);
+            });
+        }
         for (const path of Object.keys(zip.files)) {
-            if (path.match(/^word\/header\d+\.xml$/)) {
+            if (path.match(/^word\/header\d+\.xml$/) && (linkedParts.size === 0 || linkedParts.has(path))) {
                 const c = await loadEntry(path);
                 if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
-            if (path.match(/^word\/footer\d+\.xml$/)) {
+            if (path.match(/^word\/footer\d+\.xml$/) && (linkedParts.size === 0 || linkedParts.has(path))) {
                 const c = await loadEntry(path);
                 if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
@@ -598,15 +608,22 @@ const DocumentParser = (() => {
         }
 
         // Link vMerge continuation cells to their restart cell
-        for (let ci = 0; ci < (rows.length > 0 ? rows[0].length : 0); ci++) {
+        const maxCols = rows.length > 0 ? Math.max(...rows.map(r => r.reduce((s,c) => s + (c.gridSpan||1), 0))) : 0;
+        for (let ci = 0; ci < maxCols; ci++) {
             let restartRow = null;
+            let restartCell = null;
             for (let ri = 0; ri < rows.length; ri++) {
                 const cell = rows[ri].find(c => c.columnIndex === ci || (c.columnIndex <= ci && c.columnIndex + (c.gridSpan||1) > ci));
                 if (!cell) continue;
-                if (cell.vMerge === 'restart' || (!cell.vMerge && restartRow !== null)) {
+                if (cell.vMerge === 'restart') {
                     restartRow = ri;
-                } else if (cell.vMerge === 'continue' && restartRow !== null) {
-                    cell.vMergeOrigin = { rowIndex: restartRow, columnIndex: ci };
+                    restartCell = cell;
+                } else if (cell.vMerge === 'continue' && restartCell) {
+                    cell.vMergeOrigin = { rowIndex: restartRow, columnIndex: ci, tableId: restartCell.tableId, rowId: restartCell.rowId, cellId: restartCell.cellId };
+                } else if (!cell.vMerge) {
+                    // Ordinary cell breaks the vMerge chain
+                    restartRow = null;
+                    restartCell = null;
                 }
             }
         }
