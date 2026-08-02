@@ -555,7 +555,6 @@ const RuleEngine = (() => {
     function checkTocVsHeadings(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const headings = docMap.elements.filter(e => e.type === 'heading' && e.text.trim()).map(e => ({ text: e.text.trim(), level: e.headingLevel, id: e.id }));
-        if (headings.length < 2) return { findings, scannedCount, skippedCount };
         // Match TOC entries: dots OR tab before page number
         const tocPat = /^(.+?)(?:\.{3,}|\t)\s*\d+\s*$/;
         const tocEntries = [];
@@ -568,6 +567,19 @@ const RuleEngine = (() => {
             if (close) { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'OBAVEZNO', confidence: 0.88, original: `TOC: \u201e${te.text}\u201c`, replacement: `Uskladiti: \u201e${close.text}\u201c`, rationale: 'Razlika TOC i naslova.' })); }
             else { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `TOC: \u201e${te.text}\u201c`, replacement: '[proveriti]', rationale: 'TOC stavka bez odgovarajućeg naslova.' })); }
         }
+
+        // Reverse check: headings not in TOC (only if TOC exists)
+        if (tocEntries.length > 0) {
+            for (const h of headings) {
+                const normH = h.text.replace(/\s+/g,' ').toLowerCase();
+                const inToc = tocEntries.some(te => te.text.replace(/\s+/g,' ').toLowerCase() === normH || levenshteinDistance(te.text.toLowerCase(), normH) <= 3);
+                if (!inToc) {
+                    const hEl = docMap.elements.find(e => e.id === h.id) || { id: h.id, type: 'heading', text: h.text, section: h.text, isDirectQuote: false };
+                    findings.push(makeFinding({ element: hEl, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `Naslov: \u201e${h.text}\u201c`, replacement: '[dodati u sadržaj]', rationale: 'Naslov postoji u dokumentu ali nije u sadržaju.' }));
+                }
+            }
+        }
+
         return { findings, scannedCount, skippedCount };
     }
 
