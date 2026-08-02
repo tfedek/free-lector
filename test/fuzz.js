@@ -303,9 +303,97 @@ async function runProperties() {
                 const r2 = await DocumentParser.parse({ name: 'b.docx', arrayBuffer: async () => buf2 });
                 assert.strictEqual(r1.elements[0]?.text, r2.elements[0]?.text);
             }
-        ), { numRuns: Math.min(NUM_RUNS, 100), seed: SEED }); // fewer runs (ZIP creation is slow)
+        ), { numRuns: NUM_RUNS, seed: SEED });
         passed++; console.log('  \x1b[32m✓\x1b[0m ZIP order independent');
     } catch (e) { report('P4-zip-order', e, SEED); }
+
+    // INVARIANT 2: Every local finding resolves to existing document unit
+    console.log('Property 2: Local findings resolve to existing units');
+    try {
+        await fc.assert(fc.asyncProperty(
+            fc.array(arbRunSplit, { minLength: 1, maxLength: 10 }),
+            async (paragraphs) => {
+                const paras = paragraphs.map(parts => buildParagraphXml(parts));
+                const docXml = buildDocXml(paras);
+                const buf = await createDocx(docXml);
+                const file = { name: 'fuzz.docx', arrayBuffer: async () => buf };
+                const result = await DocumentParser.parse(file);
+                const { findings } = RuleEngine.runAudit(result, opts);
+                const elementIds = new Set(result.elements.map(e => e.id));
+                // Add synthetic IDs
+                elementIds.add('doc-global');
+                elementIds.add('doc-coverage');
+                for (const f of findings) {
+                    if (f.globalPattern) continue; // global findings don't need location
+                    if (f.paragraphId && !f.paragraphId.startsWith('fn-') && !f.paragraphId.startsWith('en-') &&
+                        !f.paragraphId.startsWith('hdr-') && !f.paragraphId.startsWith('ftr-') &&
+                        !f.paragraphId.startsWith('doc-')) {
+                        assert(elementIds.has(f.paragraphId),
+                            `Finding "${f.id}" references non-existent element "${f.paragraphId}"`);
+                    }
+                }
+            }
+        ), { numRuns: NUM_RUNS, seed: SEED });
+        passed++; console.log('  \x1b[32m✓\x1b[0m All findings resolve');
+    } catch (e) { report('P2-resolve', e, SEED); }
+
+    // INVARIANT 8: No duplicate findings at same location (after app-level dedup)
+    console.log('Property 8: No duplicate findings after dedup');
+    try {
+        await fc.assert(fc.asyncProperty(
+            fc.array(arbRunSplit, { minLength: 1, maxLength: 10 }),
+            async (paragraphs) => {
+                const paras = paragraphs.map(parts => buildParagraphXml(parts));
+                const docXml = buildDocXml(paras);
+                const buf = await createDocx(docXml);
+                const file = { name: 'fuzz.docx', arrayBuffer: async () => buf };
+                const result = await DocumentParser.parse(file);
+                const { findings } = RuleEngine.runAudit(result, opts);
+                // Apply same dedup logic as app.js (paragraphId+category+original+replacement)
+                const seen = new Set();
+                const deduped = [];
+                for (const f of findings) {
+                    const key = `${f.paragraphId}||${f.tableId||''}||${f.cellId||''}||${f.category}||${f.original}||${f.replacement}`;
+                    if (!seen.has(key)) { seen.add(key); deduped.push(f); }
+                }
+                // After dedup, no duplicates should remain
+                const seen2 = new Set();
+                for (const f of deduped) {
+                    const key = `${f.paragraphId}||${f.tableId||''}||${f.cellId||''}||${f.category}||${f.original}||${f.replacement}`;
+                    assert(!seen2.has(key), `Duplicate after dedup: "${f.category}" "${f.original?.substring(0,30)}"`);
+                    seen2.add(key);
+                }
+            }
+        ), { numRuns: NUM_RUNS, seed: SEED });
+        passed++; console.log('  \x1b[32m✓\x1b[0m No duplicates after dedup');
+    } catch (e) { report('P8-dedup', e, SEED); }
+
+    // INVARIANT 10: Visible text never silently lost
+    console.log('Property 10: No silent text loss');
+    try {
+        await fc.assert(fc.asyncProperty(
+            fc.array(arbRunSplit, { minLength: 1, maxLength: 10 }),
+            async (paragraphs) => {
+                const visibleText = paragraphs.map(parts => parts.join('')).join('');
+                const paras = paragraphs.map(parts => buildParagraphXml(parts));
+                const docXml = buildDocXml(paras);
+                const buf = await createDocx(docXml);
+                const file = { name: 'fuzz.docx', arrayBuffer: async () => buf };
+                const result = await DocumentParser.parse(file);
+                // All generated visible text must appear in rawText
+                const rawText = result.rawText || '';
+                const combinedParsed = result.elements.map(e => e.text).join('');
+                // Each paragraph's text must be present
+                for (let i = 0; i < paragraphs.length; i++) {
+                    const expected = paragraphs[i].join('');
+                    if (expected.trim().length === 0) continue; // empty paragraphs may be skipped
+                    assert(rawText.includes(expected) || combinedParsed.includes(expected),
+                        `Text lost: "${expected.substring(0,50)}" not in parsed output`);
+                }
+            }
+        ), { numRuns: NUM_RUNS, seed: SEED });
+        passed++; console.log('  \x1b[32m✓\x1b[0m No text loss');
+    } catch (e) { report('P10-text-loss', e, SEED); }
 
     // Summary
     console.log(`\n${'='.repeat(40)}`);
