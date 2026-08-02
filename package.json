@@ -4,7 +4,9 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "fuzz": "node test/fuzz.js",
+    "fuzz:nightly": "FUZZ_CASES=10000 node test/fuzz.js"
   },
   "repository": {
     "type": "git",
@@ -20,6 +22,7 @@
   "homepage": "https://github.com/tfedek/free-lector#readme",
   "devDependencies": {
     "@xmldom/xmldom": "^0.9.10",
+    "fast-check": "^4.9.0",
     "jszip": "^3.10.1"
   }
 }

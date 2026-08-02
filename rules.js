@@ -92,7 +92,7 @@ const RuleEngine = (() => {
             if (!result) continue;
 
             // Check if any extra source (cells, headers/footers, footnotes) produced findings in this category
-            const categoryMap = { spacing: 'Razmaci', brackets: 'Zagrade', scriptMix: 'Mešanje pisama', quotes: 'Tipografija', duplicates: 'Duple reči', urls: 'URL', markdown: 'Markdown artefakt', greek: 'Grčki bez prevoda' };
+            const categoryMap = { spacing: 'Razmaci', brackets: 'Zagrade', scriptMix: 'Mešanje pisama', quotes: 'Tipografija', duplicates: 'Duple reči', urls: 'URL', markdown: 'Markdown artefakt', greek: 'Grčki bez prevoda', capsWords: 'ALL-CAPS' };
             const cat = categoryMap[check.key];
             const hasExtraFindings = cat ? (
                 allExtraFindings.some(f => f.category === cat) ||
@@ -700,7 +700,7 @@ const RuleEngine = (() => {
             const text = entry.text.trim();
 
             // Skip ancient/classical sources (no modern publication year expected)
-            const isAncient = text.match(/\b(Herodot|Thucydides|Plutarch|Diodorus|Strabo|Pausanias|Appian|Apijan|Josephus|Flavius|Pseudo-|Homer|Hesiod|Plato|Aristotle|Aristot|Cicero|Tacitus|Livius|Plinius|Ptolemy|Euripides|Sophocles|Aeschylus|Xenophon|Polybius|Apollodorus|Bibliotheca)\b/i);
+            const isAncient = text.match(/\b(Herodot(us)?|Thucydides|Plutarch|Diodorus|Strabo|Pausanias|Appian|Apijan|Josephus|Flavius|Pseudo-|Homer|Hesiod|Plato|Platon|Aristotle|Aristot|Cicero|Tacitus|Livius|Plinius|Ptolemy|Euripides|Sophocles|Aeschylus|Xenophon|Polybius|Apollodorus|Bibliotheca|Historiae|Antiquitates|Annales)\b/i);
             // Skip electronic/web sources (URLs present)
             const isElectronic = text.match(/https?:\/\//);
             // Skip religious texts
@@ -955,7 +955,7 @@ const RuleEngine = (() => {
                     if (/^[IVXLCDM]+$/.test(word)) continue;
                     if (headingWords.has(word)) continue;
                     if (tableCapsWords.has(word)) continue;
-                    findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.` }));
+                    findings.push(makeFinding({ element: el, category: 'ALL-CAPS', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.` }));
                 }
             }
         }

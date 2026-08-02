@@ -304,7 +304,7 @@ section('\nĆirilička ALL-CAPS:');
 test('Cyrillic ALL-CAPS word detected', () => {
     const doc = makeDocMap([{text:'Ovo je ТЕКСТ napisano velikim slovima.'}]);
     const {findings} = RuleEngine.runAudit(doc, {capsWords:true});
-    assert(findings.some(f=>f.category==='Tipografija'&&f.original==='ТЕКСТ'));
+    assert(findings.some(f=>f.category==='ALL-CAPS'&&f.original==='ТЕКСТ'));
 });
 
 // ==========================================
