@@ -223,9 +223,12 @@
     function updateStatsDisplay(auditJson) {
         const s = auditJson.summary;
         statsDiv.innerHTML = '';
-        if (s.blockers > 0) addBadge('Blocker: '+s.blockers, 'stat-blocker');
-        if (s.mandatory > 0) addBadge('Obavezno: '+s.mandatory, 'stat-mandatory');
-        if (s.verify > 0) addBadge('Proveriti: '+s.verify, 'stat-verify');
+        const bOpen = s.blockers_open !== undefined ? s.blockers_open : s.blockers;
+        const mOpen = s.mandatory_open !== undefined ? s.mandatory_open : s.mandatory;
+        const vOpen = s.verify_open !== undefined ? s.verify_open : s.verify;
+        if (bOpen > 0) addBadge('Blocker: '+bOpen, 'stat-blocker');
+        if (mOpen > 0) addBadge('Obavezno: '+mOpen, 'stat-mandatory');
+        if (vOpen > 0) addBadge('Proveriti: '+vOpen, 'stat-verify');
         if (s.recommendations > 0) addBadge('Preporuke: '+s.recommendations, 'stat-recommendation');
         if (s.passed_checks > 0) addBadge('Prošlo: '+s.passed_checks, 'stat-passed');
         // Dynamic final message from scope
@@ -310,25 +313,33 @@
     }
 
     function recalculateSummary() {
-        const open = currentAuditJson.findings.filter(f => f.status === 'OPEN');
+        const all = currentAuditJson.findings;
+        const open = all.filter(f => f.status === 'OPEN');
         const s = currentAuditJson.summary;
-        s.mandatory = open.filter(f => f.priority === 'OBAVEZNO').length;
-        s.verify = open.filter(f => f.priority === 'PROVERITI').length;
-        s.recommendations = open.filter(f => f.priority === 'PREPORUKA').length;
-        s.blockers = open.filter(f => f.priority === 'BLOCKER').length;
-        s.total_occurrences = open.length;
-        s.total_finding_categories = new Set(open.map(f => f.category)).size;
+
+        // Update open-specific counts (do NOT overwrite totals)
+        s.mandatory_open = open.filter(f => f.priority === 'OBAVEZNO').length;
+        s.blockers_open = open.filter(f => f.priority === 'BLOCKER').length;
+        s.verify_open = open.filter(f => f.priority === 'PROVERITI').length;
+
+        // Update by_status
+        s.by_status = {
+            open: open.length,
+            done: all.filter(f => f.status === 'DONE').length,
+            rejected: all.filter(f => f.status === 'REJECTED').length,
+        };
+
+        // total_occurrences stays as total, not open
+        // mandatory/blockers/verify/recommendations stay as totals (set at build time)
 
         const scope = currentAuditJson.scope;
         const reqCaps = currentAuditJson.required_capabilities || ['grammar', 'visual_layout', 'style'];
         const reqComplete = reqCaps.every(cap => scope[cap] === true);
-        s.can_be_marked_final = reqComplete && s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
+        s.can_be_marked_final = reqComplete && s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0;
 
-        // Dynamic final message from actual scope
         if (s.can_be_marked_final) {
             s.final_assessment = 'Audit završen. Sve provere prošle.';
-        } else if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) {
-            // Build message from what's missing
+        } else if (s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0) {
             const missing = [];
             if (!scope.grammar) missing.push('gramatika');
             if (!scope.style) missing.push('stil');
@@ -337,7 +348,7 @@
                 ? `Determinističke provere završene. Nedostaje: ${missing.join(', ')}.`
                 : 'Determinističke provere završene.';
         } else {
-            s.final_assessment = `${s.mandatory} obaveznih ispravki, ${s.blockers} blokirajućih. Nije spreman.`;
+            s.final_assessment = `${s.mandatory_open} obaveznih, ${s.blockers_open} blokirajućih i ${s.verify_open} za proveru. Nije spreman.`;
         }
         currentAuditJson.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
         updateStatsDisplay(currentAuditJson);

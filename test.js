@@ -892,6 +892,119 @@ testAsync('ZIP with extreme compression ratio rejected', async () => {
 });
 
 // ==========================================
+// REGRESSION: )( in cell, footnote, header
+// ==========================================
+section('\nPrerano zatvaranje )(  :');
+test(')( in cell detected', () => {
+    const tableEl = { type:'table', text:'greška )( tu', tableId:'t-pc',
+        rows:[[{text:'greška )( tu', tableId:'t-pc', rowId:'t-pc-r0', cellId:'t-pc-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['greška )( tu']}]] };
+    const doc = makeDocMap([tableEl]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade'&&f.cellId);
+    assert(bf.length >= 1, 'Should detect )( in cell');
+    assert(bf[0].rationale.includes('Prerano'), 'Should mention premature close');
+});
+test(')( in footnote detected', () => {
+    const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'tekst )( greška', isEmpty:false}]});
+    const {findings} = RuleEngine.runAudit(doc, {footnotes:true, brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('fusnot'));
+    assert(bf.length >= 1, 'Should detect )( in footnote');
+});
+test(')( in header detected', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'hdr )( err',style:'Header',runs:[{text:'hdr )( err'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade'&&f.section.includes('zaglavlje'));
+    assert(bf.length >= 1, 'Should detect )( in header');
+});
+
+// ==========================================
+// REGRESSION: dupe word in quoted cell
+// ==========================================
+section('\nDupla reč u citiranoj ćeliji:');
+test('dupe word in quoted cell gets PROVERITI', () => {
+    const tableEl = { type:'table', text:'test', tableId:'t-dq',
+        rows:[[{text:'\u201eOn je je rekao.\u201c', tableId:'t-dq', rowId:'t-dq-r0', cellId:'t-dq-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['\u201eOn je je rekao.\u201c']}]] };
+    const doc = makeDocMap([tableEl]);
+    const {findings} = RuleEngine.runAudit(doc, {duplicates:true});
+    const df = findings.filter(f=>f.category==='Duple reči'&&f.cellId);
+    assert(df.length >= 1, 'Should find dupe in cell');
+    assert.strictEqual(df[0].priority, 'PROVERITI', 'Quoted cell dupe → PROVERITI');
+    assert.strictEqual(df[0].isDirectQuote, true);
+});
+
+// ==========================================
+// REGRESSION: URL and Markdown in cell
+// ==========================================
+section('\nURL i Markdown u ćeliji:');
+test('URL in cell checked', () => {
+    const tableEl = { type:'table', text:'test', tableId:'t-url',
+        rows:[[{text:'Link: https://example.com/path,', tableId:'t-url', rowId:'t-url-r0', cellId:'t-url-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['Link: https://example.com/path,']}]] };
+    const doc = makeDocMap([tableEl]);
+    const {findings} = RuleEngine.runAudit(doc, {urls:true});
+    assert(findings.some(f=>f.category==='URL'&&f.cellId), 'Should detect URL issue in cell');
+});
+test('Markdown in cell checked (docx type)', () => {
+    const tableEl = { type:'table', text:'test', tableId:'t-md',
+        rows:[[{text:'This is **bold** text', tableId:'t-md', rowId:'t-md-r0', cellId:'t-md-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['This is **bold** text']}]] };
+    const doc = makeDocMap([tableEl], {type:'docx'});
+    const {findings} = RuleEngine.runAudit(doc, {markdown:true});
+    assert(findings.some(f=>f.category==='Markdown artefakt'&&f.cellId), 'Should detect markdown in cell');
+});
+
+// ==========================================
+// REGRESSION: nested table section
+// ==========================================
+section('\nSekcija ugnježdene tabele:');
+test('nested table finding has parent section, not (nepoznata lokacija)', () => {
+    const nestedTbl = { type:'table', tableId:'t-inner', rows:[[{text:'Inner  dbl', tableId:'t-inner', rowId:'t-inner-r0', cellId:'t-inner-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['Inner  dbl']}]] };
+    const outerEl = { type:'table', text:'Outer', tableId:'t-outer', section:'Poglavlje 1',
+        rows:[[{text:'Outer', tableId:'t-outer', rowId:'t-outer-r0', cellId:'t-outer-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['Outer'], nestedTables:[nestedTbl]}]] };
+    const doc = makeDocMap([outerEl]);
+    doc.elements[0].section = 'Poglavlje 1';
+    const {findings} = RuleEngine.runAudit(doc, {spacing:true});
+    const innerFindings = findings.filter(f=>f.tableId==='t-inner');
+    assert(innerFindings.length >= 1, 'Should have inner table finding');
+    assert(innerFindings[0].section.includes('Poglavlje') || innerFindings[0].section.includes('tabela'), `Section should inherit, got: ${innerFindings[0].section}`);
+});
+
+// ==========================================
+// REGRESSION: vMerge with gridSpan=2
+// ==========================================
+section('\nvMerge + gridSpan:');
+testAsync('vMerge continue with gridSpan=2 does not overwrite origin', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Top merged</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = {name:'t.docx', arrayBuffer:async()=>buf};
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e=>e.type==='table');
+    const contCell = tbl.rows[1][0];
+    assert.strictEqual(contCell.vMerge, 'continue');
+    assert(contCell.vMergeOrigin, 'Should have vMergeOrigin');
+    assert.strictEqual(contCell.vMergeOrigin.columnIndex, 0, 'Should point to col 0 (restart cell)');
+});
+
+// ==========================================
+// REGRESSION: header without w:headerReference
+// ==========================================
+section('\nHeader bez reference:');
+testAsync('header without w:headerReference skipped when rels+refs exist', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:sectPr><w:headerReference w:type="default" r:id="rId1"/></w:sectPr></w:body></w:document>`;
+    const relsXml = `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>`;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', docXml);
+    zip.file('word/_rels/document.xml.rels', relsXml);
+    zip.file('word/header1.xml', '<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Referenced</w:t></w:r></w:p></w:hdr>');
+    zip.file('word/header99.xml', '<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Orphan</w:t></w:r></w:p></w:hdr>');
+    const buf = await zip.generateAsync({type:'arraybuffer'});
+    const file = {name:'t.docx', arrayBuffer:async()=>buf};
+    const result = await DocumentParser.parse(file);
+    assert.strictEqual(result.headers.length, 1);
+    assert(result.headers[0].text.includes('Referenced'));
+});
+
+// ==========================================
 // SUMMARY — run async tests then report
 // ==========================================
 

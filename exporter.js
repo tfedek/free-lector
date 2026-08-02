@@ -66,7 +66,7 @@ const Exporter = (() => {
         } else if (blockersOpen === 0 && mandatoryOpen === 0 && verifyOpen === 0) {
             finalAssessment = `Determinističke provere su završene. Nedostaje: ${missingParts.join(', ') || 'ništa'}.`;
         } else {
-            finalAssessment = `Dokument ima ${mandatory} obaveznih ispravki i ${blockers} blokirajućih problema. Nije spreman za objavljivanje.`;
+            finalAssessment = `Dokument ima ${mandatoryOpen} obaveznih, ${blockersOpen} blokirajućih i ${verifyOpen} za proveru. Nije spreman za objavljivanje.`;
         }
 
         // FNV-based content ID (content only, no filename)
@@ -365,7 +365,7 @@ const Exporter = (() => {
 
         if (s.can_be_marked_final) s.final_assessment = 'Audit završen. Sve provere prošle.';
         else if (openBlockers === 0 && openMandatory === 0 && openVerify === 0) s.final_assessment = 'Determinističke provere završene. Nedostaju obavezne sposobnosti.';
-        else s.final_assessment = `${openMandatory} obaveznih, ${openBlockers} blokirajućih otvoreno. Nije spreman.`;
+        else s.final_assessment = `${openMandatory} obaveznih, ${openBlockers} blokirajućih i ${openVerify} za proveru. Nije spreman.`;
 
         filtered.audit_status.status = s.can_be_marked_final ? 'POTPUN' : 'DELIMIČAN';
         filtered.global_patterns = extractGlobalPatterns(targetFindings);

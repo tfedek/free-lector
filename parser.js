@@ -134,24 +134,54 @@ const DocumentParser = (() => {
         const endnotes = enContent ? parseEndnotes(enContent, 'word/endnotes.xml', parseXmlStrict) : [];
 
         let headers = [], footers = [];
-        // Only load headers/footers referenced in document relationships
+        // Only load headers/footers actually referenced via w:headerReference/w:footerReference in document.xml
         const relsContent = await loadEntry('word/_rels/document.xml.rels');
         const linkedParts = new Set();
-        if (relsContent) {
-            const relsMatches = relsContent.match(/Target="(header\d+\.xml|footer\d+\.xml)"/gi) || [];
-            relsMatches.forEach(m => {
-                const target = m.match(/Target="([^"]+)"/i);
-                if (target) linkedParts.add('word/' + target[1]);
-            });
-        }
-        for (const path of Object.keys(zip.files)) {
-            if (path.match(/^word\/header\d+\.xml$/) && (linkedParts.size === 0 || linkedParts.has(path))) {
-                const c = await loadEntry(path);
-                if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
+        if (relsContent && docContent) {
+            // Step 1: Find r:id values from w:headerReference and w:footerReference in document.xml
+            const refIds = new Set();
+            const hdrRefMatches = docContent.match(/w:headerReference[^>]*r:id="([^"]+)"/gi) || [];
+            const ftrRefMatches = docContent.match(/w:footerReference[^>]*r:id="([^"]+)"/gi) || [];
+            for (const m of [...hdrRefMatches, ...ftrRefMatches]) {
+                const idMatch = m.match(/r:id="([^"]+)"/i);
+                if (idMatch) refIds.add(idMatch[1]);
             }
-            if (path.match(/^word\/footer\d+\.xml$/) && (linkedParts.size === 0 || linkedParts.has(path))) {
-                const c = await loadEntry(path);
-                if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
+            // Step 2: Map r:id to Target in document.xml.rels
+            if (refIds.size > 0) {
+                const relEntries = relsContent.match(/<Relationship[^>]+>/gi) || [];
+                for (const rel of relEntries) {
+                    const idMatch = rel.match(/Id="([^"]+)"/i);
+                    const targetMatch = rel.match(/Target="([^"]+)"/i);
+                    if (idMatch && targetMatch && refIds.has(idMatch[1])) {
+                        linkedParts.add('word/' + targetMatch[1]);
+                    }
+                }
+            }
+            // Fallback: if no w:headerReference found in doc, use rels directly (for compat)
+            if (refIds.size === 0) {
+                const relEntries = relsContent.match(/<Relationship[^>]+>/gi) || [];
+                for (const rel of relEntries) {
+                    const typeMatch = rel.match(/Type="[^"]*\/(header|footer)"/i);
+                    const targetMatch = rel.match(/Target="([^"]+)"/i);
+                    if (typeMatch && targetMatch) {
+                        linkedParts.add('word/' + targetMatch[1]);
+                    }
+                }
+            }
+        }
+        const hasRels = !!relsContent && linkedParts.size > 0;
+        for (const path of Object.keys(zip.files)) {
+            if (path.match(/^word\/header\d+\.xml$/)) {
+                if (hasRels ? linkedParts.has(path) : true) {
+                    const c = await loadEntry(path);
+                    if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
+                }
+            }
+            if (path.match(/^word\/footer\d+\.xml$/)) {
+                if (hasRels ? linkedParts.has(path) : true) {
+                    const c = await loadEntry(path);
+                    if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
+                }
             }
         }
 
@@ -549,6 +579,7 @@ const DocumentParser = (() => {
                 // Extract cell content
                 const cellParagraphs = [];
                 let cellText = '';
+                let cellDirectText = '';
                 const cellNestedTables = [];
                 let cellHasNested = false;
                 for (const tcContent of tcChild.children) {
@@ -556,6 +587,7 @@ const DocumentParser = (() => {
                         const pText = extractVisibleText(tcContent, ns);
                         cellParagraphs.push(pText);
                         cellText += pText + ' ';
+                        cellDirectText += pText + ' ';
                     } else if (tcContent.localName === 'tbl') {
                         const nestedTable = parseTable(tcContent, ns, tableIdx * 100 + (hasAnyNestedTable ? 1 : 0));
                         cellHasNested = true;
@@ -566,10 +598,12 @@ const DocumentParser = (() => {
                     }
                 }
                 cellText = cellText.trim();
+                cellDirectText = cellDirectText.trim();
                 allCellTexts.push(cellText);
 
                 cells.push({
-                    text: cellText, paragraphs: cellParagraphs,
+                    text: cellText, directText: cellDirectText,
+                    paragraphs: cellParagraphs,
                     rowIndex: rows.length, columnIndex: logicalCol,
                     gridSpan, vMerge: vMergeType,
                     hasNestedTable: cellHasNested,
@@ -618,8 +652,8 @@ const DocumentParser = (() => {
                 if (cell.vMerge === 'restart') {
                     restartRow = ri;
                     restartCell = cell;
-                } else if (cell.vMerge === 'continue' && restartCell) {
-                    cell.vMergeOrigin = { rowIndex: restartRow, columnIndex: ci, tableId: restartCell.tableId, rowId: restartCell.rowId, cellId: restartCell.cellId };
+                } else if (cell.vMerge === 'continue' && restartCell && !cell.vMergeOrigin) {
+                    cell.vMergeOrigin = { rowIndex: restartRow, columnIndex: restartCell.columnIndex, tableId: restartCell.tableId, rowId: restartCell.rowId, cellId: restartCell.cellId };
                 } else if (!cell.vMerge) {
                     // Ordinary cell breaks the vMerge chain
                     restartRow = null;

@@ -117,14 +117,19 @@ const RuleEngine = (() => {
         const doSpacing = options.spacing === true;
         const doBrackets = options.brackets === true;
         const doScriptMix = options.scriptMix === true;
-        if (!doSpacing && !doBrackets && !doScriptMix) return findings;
+        const doDuplicates = options.duplicates === true;
+        const doUrls = options.urls === true;
+        const doGreek = options.greek === true;
+        const doMarkdown = options.markdown === true;
+        if (!doSpacing && !doBrackets && !doScriptMix && !doDuplicates && !doUrls && !doGreek && !doMarkdown) return findings;
 
         for (const el of docMap.elements) {
             if (el.type !== 'table' || !el.rows) continue;
             for (const row of el.rows) {
                 for (const cell of row) {
                     if (!cell.text || cell.text.trim().length === 0) continue;
-                    const text = cell.text;
+                    const text = cell.directText !== undefined ? cell.directText : cell.text;
+                    if (!text || text.trim().length === 0) continue;
                     const cm = { tableId: cell.tableId, rowId: cell.rowId, cellId: cell.cellId, rowIndex: cell.rowIndex, columnIndex: cell.columnIndex };
 
                     if (doSpacing) {
@@ -151,12 +156,19 @@ const RuleEngine = (() => {
                     if (doBrackets) {
                         for (const [open, close] of [['(',')'],['[',']'],['{','}']]) {
                             let depth = 0;
+                            let prematureClose = false;
                             for (let i = 0; i < text.length; i++) {
                                 if (text[i] === open) depth++;
-                                else if (text[i] === close) depth--;
+                                else if (text[i] === close) {
+                                    depth--;
+                                    if (depth < 0) { prematureClose = true; depth = 0; }
+                                }
                             }
-                            if (depth !== 0) {
-                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale: `Neuparene zagrade u ćeliji (${cell.cellId}).`, ...cm }));
+                            if (depth !== 0 || prematureClose) {
+                                const rationale = prematureClose
+                                    ? `Prerano zatvorena zagrada ${close} pre otvaranja ${open} u ćeliji.`
+                                    : `Neuparene zagrade u ćeliji (${cell.cellId}).`;
+                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale, ...cm }));
                             }
                         }
                     }
@@ -169,6 +181,49 @@ const RuleEngine = (() => {
                                 findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ćeliji: \u201e${word}\u201c.`, ...cm }));
                             }
                         }
+                    }
+
+                    // Per-cell: duplicate words
+                    if (options.duplicates) {
+                        const allowedDups = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                        const dupRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let dm;
+                        while ((dm = dupRe.exec(text)) !== null) {
+                            if (allowedDups.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
+                            findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč \u201e${dm[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                        }
+                    }
+
+                    // Per-cell: URLs
+                    if (options.urls) {
+                        const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g; let um;
+                        while ((um = urlRe.exec(text)) !== null) {
+                            const url = um[0];
+                            let trailing = url.match(/[,.;]+$/);
+                            if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom u ćeliji.', ...cm })); }
+                        }
+                    }
+
+                    // Per-cell: Greek without translation
+                    if (options.greek) {
+                        const gRe = /[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s,;\u00B7.'"\u0300-\u036F\u1DC0-\u1DFF]{2,}/g; let gm;
+                        while ((gm = gRe.exec(text)) !== null) {
+                            const after = text.substring(gm.index+gm[0].length, gm.index+gm[0].length+200);
+                            const trNear = /[(\u201E\u201A""][^)"\u201C"]*[\u0400-\u04FFa-zA-Z\u00C0-\u024F]{5,}[^)"\u201C"]*[)"\u201C""]/;
+                            if (trNear.test(after.substring(0,150))) continue;
+                            const snip = gm[0].length > 40 ? gm[0].substring(0,40)+'...' : gm[0];
+                            findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u ćeliji.', requiresSourceVerification: true, ...cm }));
+                        }
+                    }
+
+                    // Per-cell: Markdown artifacts
+                    if (options.markdown && docMap.type !== 'markdown') {
+                        const mdPatterns = [
+                            { re: /(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, desc: '**bold**' },
+                            { re: /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, desc: '*italic*' },
+                            { re: /\[([^\]]+)\]\([^)]+\)/g, desc: '[link](url)' },
+                            { re: /```/g, desc: '```' },
+                        ];
+                        for (const pat of mdPatterns) { pat.re.lastIndex = 0; let mm; while ((mm = pat.re.exec(text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc} u ćeliji.`, ...cm })); } }
                     }
 
                     // Apply direct quote protection PER CELL (not per table)
@@ -186,13 +241,16 @@ const RuleEngine = (() => {
             }
         }
 
-        // Recursively check nested tables
+        // Recursively check nested tables — inherit parent's section
         for (const el of docMap.elements) {
             if (el.type !== 'table' || !el.rows) continue;
             for (const row of el.rows) {
                 for (const cell of row) {
                     if (!cell.nestedTables) continue;
                     for (const nestedTbl of cell.nestedTables) {
+                        // Inherit section from parent table element
+                        nestedTbl.section = el.section || '(tabela)';
+                        nestedTbl.id = nestedTbl.tableId || el.id;
                         const nestedDoc = { elements: [nestedTbl], type: 'docx', footnotes: [], endnotes: [], headerElements: [], footerElements: [] };
                         const nf = checkTableCells(nestedDoc, options);
                         findings.push(...nf);
@@ -230,10 +288,16 @@ const RuleEngine = (() => {
 
             if (options.brackets) {
                 for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
-                    let depth = 0;
-                    for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
-                    if (depth !== 0) {
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.` }));
+                    let depth = 0; let prematureClose = false;
+                    for (let i = 0; i < text.length; i++) {
+                        if (text[i]===o) depth++;
+                        else if (text[i]===c) { depth--; if (depth < 0) { prematureClose = true; depth = 0; } }
+                    }
+                    if (depth !== 0 || prematureClose) {
+                        const rationale = prematureClose
+                            ? `Prerano zatvorena zagrada ${c} u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`
+                            : `Neuparene zagrade u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`;
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale }));
                     }
                 }
             }
@@ -332,6 +396,7 @@ const RuleEngine = (() => {
         ];
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
             for (const pat of patterns) { pat.re.lastIndex = 0; let m; while ((m = pat.re.exec(el.text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: m[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc}.` })); } }
         }
@@ -395,6 +460,7 @@ const RuleEngine = (() => {
         const trNear = /[(\u201E\u201A""][^)"\u201C"]*[\u0400-\u04FFa-zA-Z\u00C0-\u024F]{5,}[^)"\u201C"]*[)"\u201C""]/;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++; gRe.lastIndex = 0; let m;
             while ((m = gRe.exec(el.text)) !== null) {
                 const after = el.text.substring(m.index+m[0].length, m.index+m[0].length+200);
@@ -417,6 +483,7 @@ const RuleEngine = (() => {
         const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
             const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|$)/giu; let m;
             while ((m = re.exec(el.text)) !== null) {
@@ -597,6 +664,7 @@ const RuleEngine = (() => {
         const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
+            if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++; urlRe.lastIndex = 0; let m;
             while ((m = urlRe.exec(el.text)) !== null) {
                 const url = m[0];
@@ -645,10 +713,16 @@ const RuleEngine = (() => {
 
             if (options.brackets) {
                 for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
-                    let depth = 0;
-                    for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
-                    if (depth !== 0) {
-                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.` }));
+                    let depth = 0; let prematureClose = false;
+                    for (let i = 0; i < text.length; i++) {
+                        if (text[i]===o) depth++;
+                        else if (text[i]===c) { depth--; if (depth < 0) { prematureClose = true; depth = 0; } }
+                    }
+                    if (depth !== 0 || prematureClose) {
+                        const rationale = prematureClose
+                            ? `Prerano zatvorena zagrada ${c} u ${noteType.toLowerCase()} ${note.id}.`
+                            : `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.`;
+                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale }));
                     }
                 }
             }
