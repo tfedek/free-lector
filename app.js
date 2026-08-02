@@ -1,6 +1,5 @@
 /**
- * Free Lector — Main Application Controller (Round 4)
- * Mode→checkbox UI sync, cell-level validation, status filter, dynamic messages
+ * Free Lector
  */
 
 (function () {
@@ -178,7 +177,7 @@
             if (seen.has(key)) continue; seen.add(key);
             if (f.confidence < 0.60) continue;
 
-            // Validate original exists — skip synthetic/global IDs
+            // Validate original exists - skip synthetic/global IDs
             const isSynthetic = f.paragraphId && (f.paragraphId.startsWith('fn-') || f.paragraphId.startsWith('en-') || f.paragraphId.startsWith('hdr-') || f.paragraphId.startsWith('ftr-') || f.paragraphId.startsWith('doc-'));
             if (f.original && !f.globalPattern && f.paragraphId && !isSynthetic && !f.original.startsWith('[') &&
                 !f.original.startsWith('TOC:') && !f.original.startsWith('Stavka') &&
@@ -186,17 +185,17 @@
                 !f.original.startsWith('Citiran')) {
                 if (f.cellId) {
                     const tbl = findTableById(docMap, f.tableId);
-                    if (!tbl) continue; // Location doesn't exist — skip
+                    if (!tbl) continue; // Location doesn't exist - skip
                     if (tbl.rows) {
                         const cell = tbl.rows.flat().find(c => c.cellId === f.cellId);
                         if (cell) {
                             const clean = f.original.replace(/^\.\.\./, '').replace(/\.\.\.$/, '');
                             if (clean.length > 3 && !cell.text.includes(clean)) continue;
-                        } else continue; // Cell not found — skip
+                        } else continue; // Cell not found - skip
                     }
                 } else {
                     const el = docMap.elements.find(e => e.id === f.paragraphId);
-                    if (!el) continue; // Location doesn't exist — skip
+                    if (!el) continue; // Location doesn't exist - skip
                     if (el.text) {
                         const clean = f.original.replace(/^\.\.\./, '').replace(/\.\.\.$/, '');
                         if (clean.length > 3 && !el.text.includes(clean)) continue;
@@ -251,7 +250,7 @@
 
 
     // ==========================================
-    // RENDER TABLE — with status filter, hide actions on resolved, "Vrati u otvoreno"
+    // RENDER TABLE - with status filter, hide actions on resolved, "Vrati u otvoreno"
     // ==========================================
     function renderTable(findings) {
         const priority = filterPriority.value;

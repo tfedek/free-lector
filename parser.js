@@ -1,6 +1,6 @@
 /**
- * Document Parser Module — Round 4
- * Full OOXML parsing with tracked changes, basedOn chain, lvlRestart, multilevel labels
+ * Document Parser Module
+ * DOCX/MD/TXT parser
  */
 
 const DocumentParser = (() => {
@@ -60,7 +60,7 @@ const DocumentParser = (() => {
         // Track total decompressed size across ALL entries
         let totalDecompressed = 0;
 
-        // Count ALL entries incrementally — reject as soon as cumulative limit exceeded.
+        // Count ALL entries incrementally - reject as soon as cumulative limit exceeded.
         // Also check compression ratio to prevent ZIP bombs (max 200:1 ratio)
         const MAX_COMPRESSION_RATIO = 200;
         for (const [path, entry] of Object.entries(zip.files)) {
@@ -158,7 +158,7 @@ const DocumentParser = (() => {
                 }
             }
             // Fallback: if no w:headerReference found in doc, use rels directly (for compat)
-            // No fallback — only load headers/footers explicitly referenced via w:headerReference
+            // No fallback - only load headers/footers explicitly referenced via w:headerReference
         }
         const hasLinkedParts = linkedParts.size > 0;
         for (const path of Object.keys(zip.files)) {
@@ -230,7 +230,7 @@ const DocumentParser = (() => {
         if (hasMergedCells) processingCoverage.supported.push('merged_cells');
         if (hasNestedTables) processingCoverage.supported.push('nested_tables');
 
-        const htmlPreview = ''; // Mammoth removed — preview not used in UI
+        const htmlPreview = ''; // Mammoth removed - preview not used in UI
 
         return {
             type: 'docx', name: fileName, elements, footnotes, endnotes,
@@ -287,11 +287,11 @@ const DocumentParser = (() => {
                 } else if (ln === 'sectPr') {
                     resetListState(listState);
                 } else if (ln === 'sdt') {
-                    // Block-level structured document tag — recurse into sdtContent
+                    // Block-level structured document tag - recurse into sdtContent
                     const sdtContent = getDirectChild(child, ns.w, 'sdtContent');
                     if (sdtContent) processBodyChildren(sdtContent);
                 } else if (ln === 'customXml' || ln === 'ins' || ln === 'del') {
-                    // Block-level tracked changes and custom XML — recurse
+                    // Block-level tracked changes and custom XML - recurse
                     if (ln === 'del' && trackedChangesMode === 'accept') continue;
                     processBodyChildren(child);
                 }
@@ -418,7 +418,7 @@ const DocumentParser = (() => {
                 // lvlRestart: when a higher level (lower ilvl number) advances,
                 // reset only levels whose lvlRestart value matches the advancing level
                 if (prevWasSameNum && prevEl.numLevel != null && prevEl.numLevel < level) {
-                    // A higher level advanced — check each lower level's lvlRestart
+                    // A higher level advanced - check each lower level's lvlRestart
                     for (let l = level; l <= 9; l++) {
                         const lDef = abstractDef.levels[l];
                         if (!lDef) continue;
@@ -501,7 +501,7 @@ const DocumentParser = (() => {
                 const sdtContent = getDirectChild(child, ns.w, 'sdtContent');
                 if (sdtContent) text += extractVisibleText(sdtContent, ns);
             } else if (ln === 'ins') {
-                // Tracked change: insertion — always include
+                // Tracked change: insertion - always include
                 text += extractVisibleText(child, ns);
             } else if (ln === 'del') {
                 // Tracked change: deletion
@@ -569,7 +569,7 @@ const DocumentParser = (() => {
 
 
     // ==========================================
-    // TABLE PARSING — gridSpan, vMerge, recursive nested tables
+    // TABLE PARSING - gridSpan, vMerge, recursive nested tables
     // ==========================================
     function parseTable(tblNode, ns, tableIdx) {
         const rows = [];
@@ -707,7 +707,7 @@ const DocumentParser = (() => {
 
 
     // ==========================================
-    // NUMBERING PARSING — full lvlOverride with w:lvl
+    // NUMBERING PARSING - full lvlOverride with w:lvl
     // ==========================================
     function parseNumbering(xmlStr, filename, parseXmlStrict) {
         if (!filename) filename = 'numbering.xml';
@@ -777,7 +777,7 @@ const DocumentParser = (() => {
 
     // ==========================================
     // MULTILEVEL LABEL FORMATTING
-    // formatLabel replaces ALL %1–%9 placeholders using counters and level defs
+    // formatLabel replaces ALL %1-%9 placeholders using counters and level defs
     // ==========================================
     function formatLabel(lvlText, counters, levelDefinitions, lvlOverrides) {
         let label = lvlText || '';
@@ -915,7 +915,7 @@ const DocumentParser = (() => {
 
 
     // ==========================================
-    // FOOTNOTES / ENDNOTES — throw on XML error
+    // FOOTNOTES / ENDNOTES - throw on XML error
     // ==========================================
     function parseFootnotes(xmlStr, filename, parseXmlStrict) {
         const doc = parseXmlStrict(xmlStr, filename);
@@ -1030,7 +1030,7 @@ const DocumentParser = (() => {
 
 
     // ==========================================
-    // HASHED IDS — uses w14:paraId or content hash (no absolute index)
+    // HASHED IDS - uses w14:paraId or content hash (no absolute index)
     // ==========================================
     function assignHashedIds(docMap) {
         const seenIds = {};

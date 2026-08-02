@@ -1,6 +1,6 @@
 /**
- * Rule Engine Module — Round 4
- * Deterministic, rule-based checks for document auditing
+ * Rule Engine Module
+ * Provere dokumenata
  */
 
 const RuleEngine = (() => {
@@ -79,10 +79,10 @@ const RuleEngine = (() => {
             }
         }
 
-        // Now form passedChecks — considers element-level, cell-level, header/footer, and footnote cross-category findings
+        // Now form passedChecks - considers element-level, cell-level, header/footer, and footnote cross-category findings
         const allExtraFindings = [...cellFindings, ...hfFindings];
         // Footnote findings are already in the check result for 'footnotes', but they produce
-        // findings in other categories (Razmaci, Zagrade, etc.) — collect them
+        // findings in other categories (Razmaci, Zagrade, etc.) - collect them
         const footnoteResult = checkResults['footnotes'];
         const footnoteCrossFindings = footnoteResult ? footnoteResult.findings.filter(f => f.category !== 'Fusnote') : [];
 
@@ -109,7 +109,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // TABLE CELL CHECKS — full spacing, all brackets {}, direct quote protection
+    // TABLE CELL CHECKS - full spacing, all brackets {}, direct quote protection
     // Returns findings array (not modifying external)
     // ==========================================
     function checkTableCells(docMap, options) {
@@ -241,7 +241,7 @@ const RuleEngine = (() => {
             }
         }
 
-        // Recursively check nested tables — inherit parent's section
+        // Recursively check nested tables - inherit parent's section
         for (const el of docMap.elements) {
             if (el.type !== 'table' || !el.rows) continue;
             for (const row of el.rows) {
@@ -264,7 +264,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // HEADERS/FOOTERS — run basic checks on header/footer text
+    // HEADERS/FOOTERS - run basic checks on header/footer text
     // ==========================================
     function checkHeadersFooters(docMap, options) {
         const findings = [];
@@ -352,7 +352,7 @@ const RuleEngine = (() => {
     }
 
     // ==========================================
-    // BRACKETS — skip table elements (checked per-cell)
+    // BRACKETS - skip table elements (checked per-cell)
     // ==========================================
     function checkBrackets(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -372,7 +372,7 @@ const RuleEngine = (() => {
                     stack.push({ char: ch, pos: i, type: openIdx });
                 } else if (closeIdx !== -1) {
                     if (stack.length === 0) {
-                        // Premature close — nothing to match
+                        // Premature close - nothing to match
                         findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.` }));
                     } else if (stack[stack.length-1].type !== closeIdx) {
                         // Mismatched: e.g. ( then ]
@@ -403,7 +403,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // QUOTES — global consolidation, multi-paragraph balance
+    // QUOTES - global consolidation, multi-paragraph balance
     // ==========================================
     function checkQuotes(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -460,7 +460,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // SPACING — skips tables (checked per-cell)
+    // SPACING - skips tables (checked per-cell)
     // ==========================================
     function checkSpacing(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -484,7 +484,7 @@ const RuleEngine = (() => {
     }
 
     // ==========================================
-    // SCRIPT MIXING — skips tables, Unicode tokenization
+    // SCRIPT MIXING - skips tables, Unicode tokenization
     // ==========================================
     function checkScriptMixing(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -589,7 +589,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // NUMBERING — numeric formats only, grouped by consecutive runs,
+    // NUMBERING - numeric formats only, grouped by consecutive runs,
     // proper expectedLabel via formatter
     // ==========================================
     function checkNumbering(docMap) {
@@ -620,7 +620,7 @@ const RuleEngine = (() => {
                     }
                 }
             }
-            // Don't return early — also run text-based strategy below for manual lists
+            // Don't return early - also run text-based strategy below for manual lists
         }
 
         // Strategy 2: Text-based, grouped by CONSECUTIVE runs
@@ -657,7 +657,7 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // BIBLIOGRAPHY — continues through subheadings until same/higher level heading
+    // BIBLIOGRAPHY - continues through subheadings until same/higher level heading
     // ==========================================
     function checkBibliography(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -786,7 +786,7 @@ const RuleEngine = (() => {
             const noteEl = { id: `${isFootnote?'fn':'en'}-${note.id}`, type: isFootnote?'footnote':'endnote', text: note.text, section: `(${noteType.toLowerCase()} ${note.id})`, isDirectQuote: false };
 
             if (note.isEmpty) {
-                findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} \u2014 prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.` }));
+                findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} - prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.` }));
                 continue;
             }
 
@@ -909,13 +909,13 @@ const RuleEngine = (() => {
 
 
     // ==========================================
-    // ALL-CAPS — Unicode tokenization (no \b for Cyrillic)
+    // ALL-CAPS - Unicode tokenization (no \b for Cyrillic)
     // ==========================================
     function checkAllCaps(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI','NSP']);
 
-        // Collect words from headings — these are likely intentional title words
+        // Collect words from headings - these are likely intentional title words
         const headingWords = new Set();
         for (const el of docMap.elements) {
             if (el.type === 'heading' && el.text) {
@@ -938,7 +938,7 @@ const RuleEngine = (() => {
             }
         }
 
-        // Find first heading index — skip everything before it (title page)
+        // Find first heading index - skip everything before it (title page)
         const firstHeadingIdx = docMap.elements.findIndex(e => e.type === 'heading');
 
         for (let i = 0; i < docMap.elements.length; i++) {
@@ -963,7 +963,7 @@ const RuleEngine = (() => {
     }
 
     // ==========================================
-    // EMPTY HEADINGS — allow H1→H2, H2→H3 (normal nesting)
+    // EMPTY HEADINGS - allow H1→H2, H2→H3 (normal nesting)
     // ==========================================
     function checkEmptyHeadings(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
@@ -974,7 +974,7 @@ const RuleEngine = (() => {
             if (!el.text || !el.text.trim()) {
                 findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'OBAVEZNO', confidence: 0.99, original: `[Prazan naslov nivoa ${el.headingLevel}]`, replacement: '[dodati tekst]', rationale: 'Naslov bez sadržaja.' }));
             }
-            // Check heading followed by another heading — only report if same or HIGHER level (not normal nesting)
+            // Check heading followed by another heading - only report if same or HIGHER level (not normal nesting)
             if (i < docMap.elements.length - 1) {
                 const next = docMap.elements[i + 1];
                 if (next.type === 'heading') {

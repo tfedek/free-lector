@@ -1,5 +1,5 @@
 /**
- * Free Lector — Property-based / Fuzz Tests
+ * Free Lector - Property-based / Fuzz Tests
  * Uses fast-check with deterministic seeds.
  * Run: node test/fuzz.js
  * Nightly: FUZZ_CASES=10000 node test/fuzz.js

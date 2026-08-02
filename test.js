@@ -1,5 +1,5 @@
 /**
- * Free Lector — Test Suite (Round 4)
+ * Free Lector - Test Suite
  * Real XML parsing via @xmldom/xmldom, real ZIP via jszip
  * Run: node test.js
  */
@@ -229,7 +229,7 @@ testAsync('ID stable after insertion elsewhere', async () => {
     const f2 = { name: 't.docx', arrayBuffer: async()=>buf2 };
     const r1 = await DocumentParser.parse(f1);
     const r2 = await DocumentParser.parse(f2);
-    // "Gamma" has same prev ("Beta") and same next ('') in both — should get same ID
+    // "Gamma" has same prev ("Beta") and same next ('') in both - should get same ID
     const gamma1 = r1.elements.find(e=>e.text==='Gamma');
     const gamma2 = r2.elements.find(e=>e.text==='Gamma');
     assert.strictEqual(gamma1.id, gamma2.id, 'Gamma ID should be stable');
@@ -846,7 +846,7 @@ testAsync('ordinary cell breaks vMerge chain', async () => {
     const file = {name:'t.docx', arrayBuffer:async()=>buf};
     const result = await DocumentParser.parse(file);
     const tbl = result.elements.find(e=>e.type==='table');
-    // Row 2 (index 2) is ordinary — no vMerge, no vMergeOrigin
+    // Row 2 (index 2) is ordinary - no vMerge, no vMergeOrigin
     assert(!tbl.rows[2][0].vMerge, 'Ordinary cell should have no vMerge');
     assert(!tbl.rows[2][0].vMergeOrigin, 'Ordinary cell should break chain');
     // Row 3 starts new merge
@@ -1007,7 +1007,7 @@ testAsync('header without w:headerReference skipped when rels+refs exist', async
 });
 
 // ==========================================
-// SUMMARY — run async tests then report
+// SUMMARY - run async tests then report
 // ==========================================
 
 (async () => {

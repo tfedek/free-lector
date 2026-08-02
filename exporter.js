@@ -1,7 +1,5 @@
 /**
- * Exporter Module — Round 4
- * Dynamic scope, configurable requiredCapabilities, FNV-based content ID,
- * structuredClone fallback, table cell columns in Excel/Markdown
+ * Free Lector - Export (Excel, Markdown, JSON)
  */
 
 const Exporter = (() => {
@@ -138,14 +136,14 @@ const Exporter = (() => {
 
 
     /**
-     * Generate Excel workbook — includes table cell columns
+     * Generate Excel workbook - includes table cell columns
      */
     function generateExcel(auditJson) {
         const wb = XLSX.utils.book_new();
 
         // SHEET 1: Summary
         const summaryData = [
-            ['LEKTORSKI AUDIT — SAŽETAK'],
+            ['LEKTORSKI AUDIT - SAŽETAK'],
             [],
             ['Naziv dokumenta', auditJson.document.name],
             ['Document ID', auditJson.document.document_id],
@@ -191,7 +189,7 @@ const Exporter = (() => {
         ws1['!cols'] = [{ wch: 25 }, { wch: 70 }];
         XLSX.utils.book_append_sheet(wb, ws1, 'Sažetak');
 
-        // SHEET 2: Findings — with Table ID, Row ID, Cell ID, Red, Kolona columns
+        // SHEET 2: Findings - with Table ID, Row ID, Cell ID, Red, Kolona columns
         const findingsHeader = [
             'Br.', 'ID', 'Odeljak', 'Pasus/ID', 'Kategorija', 'Prioritet',
             'Pouzdanost', 'Original', 'Predložena ispravka', 'Obrazloženje',
@@ -239,7 +237,7 @@ const Exporter = (() => {
     }
 
     /**
-     * Markdown report — includes table cell info for cell-level findings
+     * Markdown report - includes table cell info for cell-level findings
      */
     function generateMarkdown(auditJson) {
         const lines = [];
@@ -247,7 +245,7 @@ const Exporter = (() => {
         const d = auditJson.document;
         const st = auditJson.audit_status;
 
-        lines.push(`# Lektorsko-korektorski audit — ${d.name}`);
+        lines.push(`# Lektorsko-korektorski audit - ${d.name}`);
         lines.push('');
         lines.push(`**Document ID:** ${d.document_id}  `);
         lines.push(`**Version ID:** ${d.version_id}  `);
