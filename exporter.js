@@ -432,7 +432,10 @@ const Exporter = (() => {
      * Version ID from content hash + processing time
      */
     function generateVersionId(rawText) {
-        const contentHash = generateDocId(rawText).substring(4, 14);
+        // Use raw (non-normalized) content hash so whitespace changes produce different versions
+        let h = 0x811c9dc5;
+        for (let i = 0; i < rawText.length; i++) { h ^= rawText.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+        const contentHash = (h >>> 0).toString(36);
         const timestamp = Date.now().toString(36);
         return `v-${contentHash}-${timestamp}`;
     }

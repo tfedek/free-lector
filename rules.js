@@ -721,19 +721,31 @@ const RuleEngine = (() => {
             }
         }
 
-        // Cross-reference — require 3+ char surname, exclude common place names and generic words
+        // Cross-reference: use body text before FIRST bib section, check against UNION of all bib entries
+        const allBibEntries = [];
+        const allBibText = processedElementIndices; // reuse the set of processed indices
+        for (const bi of bibIndices) {
+            const bh = docMap.elements[bi];
+            const bl = bh.headingLevel || 1;
+            for (let i = bi + 1; i < docMap.elements.length; i++) {
+                const el = docMap.elements[i];
+                if (el.type === 'heading' && (el.headingLevel || 1) <= bl) break;
+                if (el.type === 'paragraph' && el.text.trim().length > 10) allBibEntries.push(el);
+            }
+        }
+        const firstBibIdx = bibIndices[0];
         const excludeWords = new Set(['Beograd','Zagreb','Sarajevo','London','Oxford','Cambridge','Berlin','Paris','Roma','Athens','Chicago','Moscow','Moskva','Atina','Review','Journal','Press','University','Institut','Academy','Society','Edition','Volume','Chapter']);
         const citPats = [/\((\p{Lu}\p{Ll}{2,}),?\s*\d{4}\)/gu, /(\p{Lu}\p{Ll}{2,})\s*\(\d{4}\)/gu];
         const cited = new Set();
-        for (const el of docMap.elements.slice(0, bibIdx)) {
+        for (const el of docMap.elements.slice(0, firstBibIdx)) {
             if (!el.text) continue;
             for (const p of citPats) { p.lastIndex = 0; let m2; while ((m2 = p.exec(el.text)) !== null) {
                 if (!excludeWords.has(m2[1])) cited.add(m2[1]);
             }}
         }
         for (const author of cited) {
-            if (!bibEntries.some(e => e.text.includes(author))) {
-                findings.push(makeFinding({ element: bibHeading, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true }));
+            if (!allBibEntries.some(e => e.text.includes(author))) {
+                findings.push(makeFinding({ element: docMap.elements[firstBibIdx], category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true }));
             }
         }
         } // end for (const bibIdx of bibIndices)
