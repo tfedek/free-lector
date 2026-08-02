@@ -67,10 +67,23 @@ const DocumentParser = (() => {
             if (entry.dir) continue;
             const compressedSize = entry._data && entry._data.compressedSize
                 ? entry._data.compressedSize : 0;
+            const declaredUncompressed = entry._data && entry._data.uncompressedSize
+                ? entry._data.uncompressedSize : 0;
+
+            // PRE-decompress check: if declared sizes available, check ratio before loading
+            if (compressedSize > 0 && declaredUncompressed > 0) {
+                if (declaredUncompressed / compressedSize > MAX_COMPRESSION_RATIO) {
+                    throw new Error(`Sumnjiv kompresioni odnos za ${path} (${Math.round(declaredUncompressed/compressedSize)}:1 deklarisan). Moguć ZIP bomb.`);
+                }
+                if (totalDecompressed + declaredUncompressed > MAX_UNCOMPRESSED_SIZE) {
+                    throw new Error(`Ukupna raspakovana veličina bi prešla ${MAX_UNCOMPRESSED_SIZE} bajtova.`);
+                }
+            }
+
+            // Decompress and verify
             const bytes = await entry.async('uint8array');
-            // Check ratio if compressed size is known
             if (compressedSize > 0 && bytes.length / compressedSize > MAX_COMPRESSION_RATIO) {
-                throw new Error(`Sumnjiv kompresioni odnos za ${path} (${Math.round(bytes.length/compressedSize)}:1). Moguć ZIP bomb.`);
+                throw new Error(`Sumnjiv kompresioni odnos za ${path} (${Math.round(bytes.length/compressedSize)}:1 stvarni). Moguć ZIP bomb.`);
             }
             totalDecompressed += bytes.length;
             if (totalDecompressed > MAX_UNCOMPRESSED_SIZE) {
@@ -191,7 +204,13 @@ const DocumentParser = (() => {
             type: 'docx', name: fileName, elements, footnotes, endnotes,
             headers, footers, headerElements, footerElements,
             styles, numbering, htmlPreview, processingCoverage,
-            rawText: elements.map(el => el.text).join('\n'),
+            rawText: [
+                ...elements.map(el => el.text),
+                ...footnotes.map(fn => fn.text),
+                ...endnotes.map(en => en.text),
+                ...headers.map(h => h.text),
+                ...footers.map(f => f.text),
+            ].join('\n'),
             wordCount: countWords(elements.map(el => el.text).join(' ')),
             paragraphCount: elements.filter(el => el.type === 'paragraph').length,
             tableCount: elements.filter(el => el.type === 'table').length,
@@ -520,6 +539,7 @@ const DocumentParser = (() => {
                 // Extract cell content
                 const cellParagraphs = [];
                 let cellText = '';
+                const cellNestedTables = [];
                 let cellHasNested = false;
                 for (const tcContent of tcChild.children) {
                     if (tcContent.localName === 'p') {
@@ -527,10 +547,10 @@ const DocumentParser = (() => {
                         cellParagraphs.push(pText);
                         cellText += pText + ' ';
                     } else if (tcContent.localName === 'tbl') {
-                        // Recursively parse nested table
                         const nestedTable = parseTable(tcContent, ns, tableIdx * 100 + (hasAnyNestedTable ? 1 : 0));
                         cellHasNested = true;
                         hasAnyNestedTable = true;
+                        cellNestedTables.push(nestedTable);
                         cellParagraphs.push(`[Tabela: ${nestedTable.text}]`);
                         cellText += nestedTable.text + ' ';
                     }
@@ -543,6 +563,7 @@ const DocumentParser = (() => {
                     rowIndex: rows.length, columnIndex: logicalCol,
                     gridSpan, vMerge: vMergeType,
                     hasNestedTable: cellHasNested,
+                    nestedTables: cellNestedTables.length > 0 ? cellNestedTables : undefined,
                 });
                 logicalCol += gridSpan;
             }
@@ -576,11 +597,25 @@ const DocumentParser = (() => {
             }
         }
 
+        // Link vMerge continuation cells to their restart cell
+        for (let ci = 0; ci < (rows.length > 0 ? rows[0].length : 0); ci++) {
+            let restartRow = null;
+            for (let ri = 0; ri < rows.length; ri++) {
+                const cell = rows[ri].find(c => c.columnIndex === ci || (c.columnIndex <= ci && c.columnIndex + (c.gridSpan||1) > ci));
+                if (!cell) continue;
+                if (cell.vMerge === 'restart' || (!cell.vMerge && restartRow !== null)) {
+                    restartRow = ri;
+                } else if (cell.vMerge === 'continue' && restartRow !== null) {
+                    cell.vMergeOrigin = { rowIndex: restartRow, columnIndex: ci };
+                }
+            }
+        }
+
         return {
             type: 'table', index: tableIdx, tableId, rows,
             text: rows.map(r => r.map(c => c.text).join(' | ')).join('\n'),
             hasHeader: hasActualHeader,
-            columnCount: rows.length > 0 ? rows[0].reduce((s,c) => s + (c.gridSpan||1), 0) : 0,
+            columnCount: rows.length > 0 ? Math.max(...rows.map(row => row.reduce((s,c) => s + (c.gridSpan||1), 0))) : 0,
             rowCount: rows.length,
             hasNestedTables: hasAnyNestedTable,
             hasMergedCells: rows.some(r => r.some(c => c.gridSpan > 1 || c.vMerge)),

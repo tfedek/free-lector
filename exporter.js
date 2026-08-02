@@ -162,6 +162,13 @@ const Exporter = (() => {
             ['Preporuke', auditJson.summary.recommendations],
             ['Provere bez grešaka', auditJson.summary.passed_checks],
             [],
+            ['STATUS PO NALAZIMA'],
+            ['Otvoreno', auditJson.summary.by_status ? auditJson.summary.by_status.open : ''],
+            ['Rešeno', auditJson.summary.by_status ? auditJson.summary.by_status.done : ''],
+            ['Nije greška', auditJson.summary.by_status ? auditJson.summary.by_status.rejected : ''],
+            ['Obavezno otvoreno', auditJson.summary.mandatory_open != null ? auditJson.summary.mandatory_open : ''],
+            ['Obavezno ukupno', auditJson.summary.mandatory_total != null ? auditJson.summary.mandatory_total : ''],
+            [],
             ['Završna procena', auditJson.summary.final_assessment],
         ];
         const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
@@ -245,6 +252,8 @@ const Exporter = (() => {
         lines.push(`- Ukupno nalaza: **${s.total_occurrences}**`);
         lines.push(`- Obavezne: **${s.mandatory}** | Proveriti: **${s.verify}** | Preporuke: **${s.recommendations}** | Blocker: **${s.blockers}**`);
         lines.push(`- Provere bez grešaka: **${s.passed_checks}**`);
+        if (s.by_status) lines.push(`- Otvoreno: **${s.by_status.open}** | Rešeno: **${s.by_status.done}** | Nije greška: **${s.by_status.rejected}**`);
+        if (s.mandatory_open != null) lines.push(`- Obavezno otvoreno: **${s.mandatory_open}** | Obavezno ukupno: **${s.mandatory_total}**`);
         lines.push(`- Finalan: ${s.can_be_marked_final ? '**DA**' : '**NE**'}`);
         lines.push('');
 
@@ -330,7 +339,13 @@ const Exporter = (() => {
         const scope = filtered.scope;
         const reqCaps = filtered.required_capabilities || DEFAULT_REQUIRED_CAPABILITIES;
         const reqComplete = reqCaps.every(cap => scope[cap] === true);
-        s.can_be_marked_final = reqComplete && s.blockers === 0 && s.mandatory === 0 && s.verify === 0;
+
+        // Final status always computed from OPEN findings only
+        const openFindings = targetFindings.filter(f => f.status === 'OPEN');
+        const openBlockers = openFindings.filter(f => f.priority === 'BLOCKER').length;
+        const openMandatory = openFindings.filter(f => f.priority === 'OBAVEZNO').length;
+        const openVerify = openFindings.filter(f => f.priority === 'PROVERITI').length;
+        s.can_be_marked_final = reqComplete && openBlockers === 0 && openMandatory === 0 && openVerify === 0;
 
         if (s.can_be_marked_final) s.final_assessment = 'Audit završen. Sve provere prošle.';
         else if (s.blockers === 0 && s.mandatory === 0 && s.verify === 0) s.final_assessment = 'Determinističke provere završene. Nedostaju obavezne sposobnosti.';

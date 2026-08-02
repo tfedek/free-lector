@@ -30,7 +30,7 @@ const RuleEngine = (() => {
             { key: 'numbering', name: 'Numeracija lista', fn: checkNumbering },
             { key: 'bibliography', name: 'Bibliografija', fn: checkBibliography },
             { key: 'urls', name: 'URL-ovi', fn: checkUrls },
-            { key: 'footnotes', name: 'Fusnote', fn: checkFootnotes },
+            { key: 'footnotes', name: 'Fusnote', fn: (dm) => checkFootnotes(dm, options) },
             { key: 'repetition', name: 'Ponovljeni pasusi', fn: checkRepetition },
             { key: 'capsWords', name: 'ALL-CAPS reči', fn: checkAllCaps },
             { key: 'emptyHeadings', name: 'Prazni naslovi', fn: checkEmptyHeadings },
@@ -79,18 +79,27 @@ const RuleEngine = (() => {
             }
         }
 
-        // Now form passedChecks (considers both element-level and cell-level findings)
+        // Now form passedChecks — considers element-level, cell-level, header/footer, and footnote cross-category findings
+        const allExtraFindings = [...cellFindings, ...hfFindings];
+        // Footnote findings are already in the check result for 'footnotes', but they produce
+        // findings in other categories (Razmaci, Zagrade, etc.) — collect them
+        const footnoteResult = checkResults['footnotes'];
+        const footnoteCrossFindings = footnoteResult ? footnoteResult.findings.filter(f => f.category !== 'Fusnote') : [];
+
         for (const check of checks) {
             if (!options[check.key]) continue;
             const result = checkResults[check.key];
             if (!result) continue;
-            const hasCellFindings = cellFindings.some(f => {
-                if (check.key === 'spacing' && f.category === 'Razmaci') return true;
-                if (check.key === 'brackets' && f.category === 'Zagrade') return true;
-                if (check.key === 'scriptMix' && f.category === 'Mešanje pisama') return true;
-                return false;
-            });
-            if (result.findings.length === 0 && !hasCellFindings) {
+
+            // Check if any extra source (cells, headers/footers, footnotes) produced findings in this category
+            const categoryMap = { spacing: 'Razmaci', brackets: 'Zagrade', scriptMix: 'Mešanje pisama', quotes: 'Tipografija', duplicates: 'Duple reči', urls: 'URL' };
+            const cat = categoryMap[check.key];
+            const hasExtraFindings = cat ? (
+                allExtraFindings.some(f => f.category === cat) ||
+                footnoteCrossFindings.some(f => f.category === cat)
+            ) : false;
+
+            if (result.findings.length === 0 && !hasExtraFindings) {
                 passedChecks.push({ area: check.name, result: 'Bez grešaka', count: result.scannedCount });
             }
         }
@@ -588,13 +597,13 @@ const RuleEngine = (() => {
     // ==========================================
     // FOOTNOTES
     // ==========================================
-    function checkFootnotes(docMap) {
+    function checkFootnotes(docMap, options) {
         const findings = [];
-        const allNotes = [...docMap.footnotes, ...docMap.endnotes];
+        const allNotes = [...(docMap.footnotes||[]), ...(docMap.endnotes||[])];
         const scannedCount = allNotes.length;
 
         for (const note of allNotes) {
-            const isFootnote = docMap.footnotes.includes(note);
+            const isFootnote = (docMap.footnotes||[]).includes(note);
             const noteType = isFootnote ? 'Fusnota' : 'Endnota';
             const noteEl = { id: `${isFootnote?'fn':'en'}-${note.id}`, type: isFootnote?'footnote':'endnote', text: note.text, section: `(${noteType.toLowerCase()} ${note.id})`, isDirectQuote: false };
 
@@ -603,56 +612,62 @@ const RuleEngine = (() => {
                 continue;
             }
 
-            // Run content checks on non-empty footnotes/endnotes
             const text = note.text;
 
-            // Double spaces
-            const dbl = /  +/g; let m;
-            while ((m = dbl.exec(text)) !== null) {
-                const ctx = getContext(text, m.index, 20);
-                findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true }));
-            }
-
-            // Unbalanced brackets
-            for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
-                let depth = 0;
-                for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
-                if (depth !== 0) {
-                    findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.` }));
+            // Only run sub-checks that are enabled in options
+            if (options.spacing) {
+                const dbl = /  +/g; let m;
+                while ((m = dbl.exec(text)) !== null) {
+                    const ctx = getContext(text, m.index, 20);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true }));
                 }
             }
 
-            // Script mixing
-            const words = text.match(/[\p{L}\p{M}]+/gu) || [];
-            for (const word of words) {
-                if (word.length < 2) continue;
-                if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
-                    findings.push(makeFinding({ element: noteEl, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${noteType.toLowerCase()}: \u201e${word}\u201c.` }));
+            if (options.brackets) {
+                for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
+                    let depth = 0;
+                    for (let i = 0; i < text.length; i++) { if (text[i]===o) depth++; else if (text[i]===c) depth--; }
+                    if (depth !== 0) {
+                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale: `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.` }));
+                    }
                 }
             }
 
-            // Straight quotes
-            const straightCount = (text.match(/"/g) || []).length;
-            if (straightCount > 0) {
-                findings.push(makeFinding({ element: noteEl, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${straightCount} ravnih navodnika u ${noteType.toLowerCase()}]`, replacement: '[zameniti tipografskim]', rationale: `${straightCount} ravnih navodnika u ${noteType.toLowerCase()} ${note.id}.`, autoFixable: true }));
+            if (options.scriptMix) {
+                const words = text.match(/[\p{L}\p{M}]+/gu) || [];
+                for (const word of words) {
+                    if (word.length < 2) continue;
+                    if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
+                        findings.push(makeFinding({ element: noteEl, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${noteType.toLowerCase()}: \u201e${word}\u201c.` }));
+                    }
+                }
             }
 
-            // Duplicate words
-            const dupeRe = /\b(\p{L}+)\s+\1\b/giu;
-            const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
-            let md;
-            while ((md = dupeRe.exec(text)) !== null) {
-                if (allowedDupes.has(md[1].toLowerCase()) || md[1].length < 2) continue;
-                findings.push(makeFinding({ element: noteEl, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: md[0], replacement: md[1], rationale: `Ponovljena reč u ${noteType.toLowerCase()}: \u201e${md[1]}\u201c.`, autoFixable: true }));
+            if (options.quotes) {
+                const straightCount = (text.match(/"/g) || []).length;
+                if (straightCount > 0) {
+                    findings.push(makeFinding({ element: noteEl, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${straightCount} ravnih navodnika u ${noteType.toLowerCase()}]`, replacement: '[zameniti tipografskim]', rationale: `${straightCount} ravnih navodnika u ${noteType.toLowerCase()} ${note.id}.`, autoFixable: true }));
+                }
             }
 
-            // URLs
-            const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
-            let mu;
-            while ((mu = urlRe.exec(text)) !== null) {
-                const url = mu[0];
-                if (url.match(/[,.;]+$/)) {
-                    findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.` }));
+            if (options.duplicates) {
+                const dupeRe = /\b(\p{L}+)\s+\1\b/giu;
+                const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                let md;
+                while ((md = dupeRe.exec(text)) !== null) {
+                    if (allowedDupes.has(md[1].toLowerCase()) || md[1].length < 2) continue;
+                    findings.push(makeFinding({ element: noteEl, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: md[0], replacement: md[1], rationale: `Ponovljena reč u ${noteType.toLowerCase()}: \u201e${md[1]}\u201c.`, autoFixable: true }));
+                }
+            }
+
+            if (options.urls) {
+                const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+                let mu;
+                while ((mu = urlRe.exec(text)) !== null) {
+                    const url = mu[0];
+                    if (url.match(/[,.;]+$/)) {
+                        findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.` }));
+                    }
                 }
             }
         }
