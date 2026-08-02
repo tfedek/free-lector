@@ -174,7 +174,7 @@
         for (const f of findings) {
             if (f.original === f.replacement) continue;
             // Dedup key includes table cell
-            const key = `${f.paragraphId}::${f.tableId||''}::${f.cellId||''}::${f.category}::${f.original}`;
+            const key = `${f.paragraphId}::${f.tableId||''}::${f.cellId||''}::${f.category}::${f.original}::${f.replacement}`;
             if (seen.has(key)) continue; seen.add(key);
             if (f.confidence < 0.60) continue;
 

@@ -501,7 +501,8 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const headings = docMap.elements.filter(e => e.type === 'heading' && e.text.trim()).map(e => ({ text: e.text.trim(), level: e.headingLevel, id: e.id }));
         if (headings.length < 2) return { findings, scannedCount, skippedCount };
-        const tocPat = /^(.+?)\.{3,}\s*\d+\s*$/;
+        // Match TOC entries: dots OR tab before page number
+        const tocPat = /^(.+?)(?:\.{3,}|\t)\s*\d+\s*$/;
         const tocEntries = [];
         for (const el of docMap.elements) { if (el.type !== 'paragraph') continue; const m2 = el.text.match(tocPat); if (m2) tocEntries.push({ text: m2[1].trim(), element: el }); }
         scannedCount = tocEntries.length;
@@ -548,7 +549,7 @@ const RuleEngine = (() => {
                     }
                 }
             }
-            return { findings, scannedCount, skippedCount };
+            // Don't return early — also run text-based strategy below for manual lists
         }
 
         // Strategy 2: Text-based, grouped by CONSECUTIVE runs
@@ -582,8 +583,11 @@ const RuleEngine = (() => {
     }
 
     function guessLvlText(label, num) {
-        // Try to guess lvlText pattern from a displayed label
-        return label.replace(String(num), '%1');
+        // Replace the LAST occurrence of the number (that's the current level)
+        const numStr = String(num);
+        const lastIdx = label.lastIndexOf(numStr);
+        if (lastIdx === -1) return label;
+        return label.substring(0, lastIdx) + '%1' + label.substring(lastIdx + numStr.length);
     }
 
 

@@ -169,19 +169,15 @@ const DocumentParser = (() => {
                 }
             }
         }
-        const hasRels = !!relsContent && linkedParts.size > 0;
+        const hasLinkedParts = linkedParts.size > 0;
         for (const path of Object.keys(zip.files)) {
-            if (path.match(/^word\/header\d+\.xml$/)) {
-                if (hasRels ? linkedParts.has(path) : true) {
-                    const c = await loadEntry(path);
-                    if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
-                }
+            if (path.match(/^word\/header\d+\.xml$/) && hasLinkedParts && linkedParts.has(path)) {
+                const c = await loadEntry(path);
+                if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
-            if (path.match(/^word\/footer\d+\.xml$/)) {
-                if (hasRels ? linkedParts.has(path) : true) {
-                    const c = await loadEntry(path);
-                    if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
-                }
+            if (path.match(/^word\/footer\d+\.xml$/) && hasLinkedParts && linkedParts.has(path)) {
+                const c = await loadEntry(path);
+                if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
             }
         }
 
@@ -275,20 +271,31 @@ const DocumentParser = (() => {
         let paragraphIndex = 0, tableIndex = 0;
         const listState = { instances: {}, seq: 0 };
 
-        for (const child of body.children) {
-            const ln = child.localName;
-            if (ln === 'p') {
-                const el = parseParagraph(child, ns, styles, numbering, paragraphIndex, listState, elements);
-                elements.push(el);
-                paragraphIndex++;
-            } else if (ln === 'tbl') {
-                elements.push(parseTable(child, ns, tableIndex));
-                resetListState(listState);
-                tableIndex++;
-            } else if (ln === 'sectPr') {
-                resetListState(listState);
+        function processBodyChildren(parent) {
+            for (const child of parent.children) {
+                const ln = child.localName;
+                if (ln === 'p') {
+                    const el = parseParagraph(child, ns, styles, numbering, paragraphIndex, listState, elements);
+                    elements.push(el);
+                    paragraphIndex++;
+                } else if (ln === 'tbl') {
+                    elements.push(parseTable(child, ns, tableIndex));
+                    resetListState(listState);
+                    tableIndex++;
+                } else if (ln === 'sectPr') {
+                    resetListState(listState);
+                } else if (ln === 'sdt') {
+                    // Block-level structured document tag — recurse into sdtContent
+                    const sdtContent = getDirectChild(child, ns.w, 'sdtContent');
+                    if (sdtContent) processBodyChildren(sdtContent);
+                } else if (ln === 'customXml' || ln === 'ins' || ln === 'del') {
+                    // Block-level tracked changes and custom XML — recurse
+                    if (ln === 'del' && trackedChangesMode === 'accept') continue;
+                    processBodyChildren(child);
+                }
             }
         }
+        processBodyChildren(body);
         return elements;
     }
 
@@ -409,12 +416,19 @@ const DocumentParser = (() => {
                         if (!lDef) continue;
                         // lvlRestart specifies which level's advancement triggers reset
                         // lvlRestart=0 means "never restart" (OOXML spec)
-                        // Default (null): reset when immediate parent level advances
+                        // lvlRestart: 1-based (0=never, 1=when level 0 advances, 2=when level 1, ...)
                         const restartAt = lDef.lvlRestart;
                         if (restartAt === 0) continue; // Never restart
-                        const effectiveRestart = restartAt ?? (l > 0 ? l - 1 : null);
+                        // Convert to 0-based for comparison with numLevel
+                        const effectiveRestart = restartAt != null ? (restartAt - 1) : (l > 0 ? l - 1 : null);
                         if (effectiveRestart != null && prevEl.numLevel <= effectiveRestart) {
-                            inst.counters[l] = (lDef.start ?? 1) - 1;
+                            // Use effective start (from lvlOverride if present)
+                            let effStart = lDef.start ?? 1;
+                            if (numDef.lvlOverrides && numDef.lvlOverrides[l]) {
+                                const ov = numDef.lvlOverrides[l];
+                                if (ov.startOverride != null) effStart = ov.startOverride;
+                            }
+                            inst.counters[l] = effStart - 1;
                         }
                     }
                 }
@@ -908,20 +922,34 @@ const DocumentParser = (() => {
         return endnotes;
     }
 
-    function extractTextFromXmlNode(node, ns) {
-        let text = '';
-        const tNodes = node.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) text += t.textContent;
-        return text;
+    function extractTextFromXmlNode(node, nsStr) {
+        // Extract text per paragraph using extractVisibleText (handles tracked changes, tabs, etc.)
+        const ns = { w: nsStr, w14: '' };
+        const paragraphs = node.getElementsByTagNameNS(nsStr, 'p');
+        if (paragraphs.length === 0) {
+            // Fallback: just get all text content
+            let text = '';
+            const tNodes = node.getElementsByTagNameNS(nsStr, 't');
+            for (const t of tNodes) text += t.textContent;
+            return text;
+        }
+        const parts = [];
+        for (const p of paragraphs) {
+            parts.push(extractVisibleText(p, ns));
+        }
+        return parts.join('\n');
     }
 
     function extractTextFromXml(xmlStr, filename, parseXmlStrict) {
         const doc = parseXmlStrict(xmlStr, filename);
-        const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        let text = '';
-        const tNodes = doc.getElementsByTagNameNS(ns, 't');
-        for (const t of tNodes) text += t.textContent + ' ';
-        return text.trim();
+        const ns = { w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main', w14: '' };
+        // Extract text per paragraph, join with newline (no spurious spaces between runs)
+        const paragraphs = doc.getElementsByTagNameNS(ns.w, 'p');
+        const parts = [];
+        for (const p of paragraphs) {
+            parts.push(extractVisibleText(p, ns));
+        }
+        return parts.join('\n').trim();
     }
 
 
