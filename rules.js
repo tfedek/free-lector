@@ -597,10 +597,19 @@ const RuleEngine = (() => {
     // ==========================================
     function checkBibliography(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const bibIdx = docMap.elements.findIndex(el =>
-            el.type === 'heading' &&
-            el.text.trim().match(/^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography|primarni izvori|sekundarni izvori|arhivski izvori|korišćena literatura|spisak literature)$/i));
-        if (bibIdx === -1) return { findings, scannedCount, skippedCount };
+        const bibPattern = /^(bibliografija|literatura|izvori i literatura|references|works cited|bibliography|primarni izvori|sekundarni izvori|arhivski izvori|korišćena literatura|spisak literature)$/i;
+
+        // Find ALL bibliography headings
+        const bibIndices = [];
+        for (let i = 0; i < docMap.elements.length; i++) {
+            const el = docMap.elements[i];
+            if (el.type === 'heading' && el.text.trim().match(bibPattern)) {
+                bibIndices.push(i);
+            }
+        }
+        if (bibIndices.length === 0) return { findings, scannedCount, skippedCount };
+
+        for (const bibIdx of bibIndices) {
 
         const bibHeading = docMap.elements[bibIdx];
         const bibLevel = bibHeading.headingLevel || 1;
@@ -616,8 +625,8 @@ const RuleEngine = (() => {
             }
             if (el.type === 'paragraph' && el.text.trim().length > 10) bibEntries.push(el);
         }
-        scannedCount = bibEntries.length;
-        if (bibEntries.length === 0) return { findings, scannedCount, skippedCount };
+        scannedCount += bibEntries.length;
+        if (bibEntries.length === 0) continue;
 
         for (const entry of bibEntries) {
             const text = entry.text.trim();
@@ -630,7 +639,7 @@ const RuleEngine = (() => {
             const isReligious = text.match(/\b(Biblija|Bible|Sveto Pismo|Quran|Talmud|Torah)\b/i);
 
             if (!isAncient && !isElectronic && !isReligious) {
-                if (!text.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/)) {
+                if (!text.match(/\b(1[5-9]\d{2}|20\\d{2})\b/)) {
                     findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
                 }
                 if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i) &&
@@ -643,7 +652,7 @@ const RuleEngine = (() => {
 
         // Cross-reference — require 3+ char surname, exclude common place names and generic words
         const excludeWords = new Set(['Beograd','Zagreb','Sarajevo','London','Oxford','Cambridge','Berlin','Paris','Roma','Athens','Chicago','Moscow','Moskva','Atina','Review','Journal','Press','University','Institut','Academy','Society','Edition','Volume','Chapter']);
-        const citPats = [/\(([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]{2,}),?\s*\d{4}\)/g, /([A-Z\u0400-\u04FF][a-z\u0400-\u04FF]{2,})\s*\(\d{4}\)/g];
+        const citPats = [/\((\p{Lu}\p{Ll}{2,}),?\s*\d{4}\)/gu, /(\p{Lu}\p{Ll}{2,})\s*\(\d{4}\)/gu];
         const cited = new Set();
         for (const el of docMap.elements.slice(0, bibIdx)) {
             if (!el.text) continue;
@@ -656,6 +665,7 @@ const RuleEngine = (() => {
                 findings.push(makeFinding({ element: bibHeading, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true }));
             }
         }
+        } // end for (const bibIdx of bibIndices)
         return { findings, scannedCount, skippedCount };
     }
 
@@ -789,7 +799,7 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const seen = new Map();
         for (const el of docMap.elements) {
-            if (!el.text || el.text.trim().length < 50 || el.type === 'heading') { skippedCount++; continue; }
+            if (!el.text || el.text.trim().length < 50 || el.type === 'heading' || el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
             const norm = el.text.trim().replace(/\s+/g,' ').toLowerCase();
             if (seen.has(norm)) { findings.push(makeFinding({ element: el, category: 'Ponavljanje', priority: 'OBAVEZNO', confidence: 0.98, original: el.text.substring(0,80)+'...', replacement: '[ukloniti]', rationale: `Ponovljen pasus (${seen.get(norm).id}).` })); }

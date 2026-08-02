@@ -60,9 +60,12 @@ const Exporter = (() => {
         const canBeMarkedFinal = requiredComplete &&
             blockersOpen === 0 && mandatoryOpen === 0 && verifyOpen === 0;
 
+        const recommendationsOpen = findings.filter(f => f.priority === 'PREPORUKA' && f.status === 'OPEN').length;
         let finalAssessment;
-        if (canBeMarkedFinal) {
+        if (canBeMarkedFinal && recommendationsOpen === 0) {
             finalAssessment = 'Audit je završen. Sve provere su prošle bez nalaza.';
+        } else if (canBeMarkedFinal) {
+            finalAssessment = `Nema otvorenih blokirajućih, obaveznih ni nalaza za proveru. Postoji ${recommendationsOpen} preporuka.`;
         } else if (blockersOpen === 0 && mandatoryOpen === 0 && verifyOpen === 0) {
             finalAssessment = `Determinističke provere su završene. Nedostaje: ${missingParts.join(', ') || 'ništa'}.`;
         } else {
