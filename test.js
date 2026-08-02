@@ -21,17 +21,26 @@ const DocumentParser = require(path.resolve(__dirname, 'parser.js'));
 
 let passed = 0, failed = 0;
 const asyncQueue = [];
-let lastSectionLabel = '';
+let currentSectionLabel = '';
+let lastPrintedSection = '';
+
+function printSectionIfNeeded() {
+    if (currentSectionLabel && currentSectionLabel !== lastPrintedSection) {
+        console.log(currentSectionLabel);
+        lastPrintedSection = currentSectionLabel;
+    }
+}
+
 function test(name, fn) {
+    printSectionIfNeeded();
     try { fn(); passed++; console.log(`  \x1b[32m\u2713\x1b[0m ${name}`); }
     catch (e) { failed++; console.log(`  \x1b[31m\u2717\x1b[0m ${name}\n    ${e.message}`); }
 }
 function testAsync(name, fn) {
-    asyncQueue.push({ name, fn, section: lastSectionLabel });
+    asyncQueue.push({ name, fn, section: currentSectionLabel });
 }
 function section(label) {
-    lastSectionLabel = label;
-    console.log(label);
+    currentSectionLabel = label;
 }
 
 function makeDocMap(elements, opts = {}) {
@@ -75,7 +84,7 @@ async function createDocxZip(documentXml, extras = {}) {
 // ==========================================
 // BASIC RULE TESTS (carried over)
 // ==========================================
-console.log('\nOsnovne provere:');
+section('\nOsnovne provere:');
 test('straight quotes consolidated globally', () => {
     const doc = makeDocMap([{text:'A "b" c.'},{text:'D "e" f.'}]);
     const {findings} = RuleEngine.runAudit(doc, allOpts());
@@ -134,7 +143,7 @@ test('Greek without translation', () => {
 // ==========================================
 // ROUND 4 TESTS: Real XML parseNumbering
 // ==========================================
-console.log('\nReal parseNumbering:');
+section('\nReal parseNumbering:');
 test('startOverride from XML', () => {
     const xml = `<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride></w:num></w:numbering>`;
     const r = DocumentParser.parseNumbering(xml);
@@ -161,7 +170,7 @@ test('bullet format excluded', () => {
 // ==========================================
 // Letter overflow and multilevel
 // ==========================================
-console.log('\nFormatiranje:');
+section('\nFormatiranje:');
 test('toLetter: 26→z, 27→aa, 28→ab', () => {
     assert.strictEqual(DocumentParser.toLetter(26, false), 'z');
     assert.strictEqual(DocumentParser.toLetter(27, false), 'aa');
@@ -248,7 +257,7 @@ testAsync('listInstanceId unique per restart', async () => {
 // ==========================================
 // Bibliography with subheadings
 // ==========================================
-console.log('\nBibliografija sa podnaslovima:');
+section('\nBibliografija sa podnaslovima:');
 test('bibliography continues through subheadings', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Bibliografija', headingLevel:1},
@@ -265,7 +274,7 @@ test('bibliography continues through subheadings', () => {
 // ==========================================
 // H1→H2 allowed
 // ==========================================
-console.log('\nHeading sequence:');
+section('\nHeading sequence:');
 test('H1 followed by H2 not reported as error', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Poglavlje 1', headingLevel:1},
@@ -291,7 +300,7 @@ test('H2 followed by H2 reports warning', () => {
 // ==========================================
 // Cyrillic ALL-CAPS
 // ==========================================
-console.log('\nĆirilička ALL-CAPS:');
+section('\nĆirilička ALL-CAPS:');
 test('Cyrillic ALL-CAPS word detected', () => {
     const doc = makeDocMap([{text:'Ovo je ТЕКСТ napisano velikim slovima.'}]);
     const {findings} = RuleEngine.runAudit(doc, {capsWords:true});
@@ -301,7 +310,7 @@ test('Cyrillic ALL-CAPS word detected', () => {
 // ==========================================
 // Multi-paragraph quote balance
 // ==========================================
-console.log('\nVišepasusni citat:');
+section('\nVišepasusni citat:');
 test('unmatched quotes across paragraphs detected', () => {
     const doc = makeDocMap([{text:'Rekao je: \u201eOvo je početak'},{text:'nastavak citata bez zatvaranja.'}]);
     const {findings} = RuleEngine.runAudit(doc, {quotes:true});
@@ -349,7 +358,7 @@ testAsync('numbering inherited through basedOn chain', async () => {
 // ==========================================
 // Contradictory passedChecks (table findings prevent "passed")
 // ==========================================
-console.log('\nKontradiktorni passedChecks:');
+section('\nKontradiktorni passedChecks:');
 test('spacing not marked as passed when table cell has error', () => {
     const tableEl = { type:'table', text:'A  B', tableId:'t-x',
         rows:[[{text:'A  B', tableId:'t-x', rowId:'t-x-r0', cellId:'t-x-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['A  B']}]] };
@@ -363,7 +372,7 @@ test('spacing not marked as passed when table cell has error', () => {
 // ==========================================
 // Duplicate bracket findings in table
 // ==========================================
-console.log('\nDuplikati zagrada u tabeli:');
+section('\nDuplikati zagrada u tabeli:');
 test('table brackets checked per-cell, not from table.text', () => {
     const tableEl = { type:'table', text:'(unclosed', tableId:'t-b',
         rows:[[{text:'(unclosed', tableId:'t-b', rowId:'t-b-r0', cellId:'t-b-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['(unclosed']}]] };
@@ -378,7 +387,7 @@ test('table brackets checked per-cell, not from table.text', () => {
 // ==========================================
 // Disabled table checks
 // ==========================================
-console.log('\nIsključene provere tabela:');
+section('\nIsključene provere tabela:');
 test('no cell findings when checks disabled', () => {
     const tableEl = { type:'table', text:'A  B', tableId:'t-d',
         rows:[[{text:'A  B', tableId:'t-d', rowId:'t-d-r0', cellId:'t-d-r0-c0', rowIndex:0, columnIndex:0, paragraphs:['A  B']}]] };
@@ -390,7 +399,7 @@ test('no cell findings when checks disabled', () => {
 // ==========================================
 // Real applyExportFilter
 // ==========================================
-console.log('\napplyExportFilter:');
+section('\napplyExportFilter:');
 test('filters and recalculates', () => {
     const doc = makeDocMap([{text:'T.'}]);
     const findings = [
@@ -407,7 +416,7 @@ test('filters and recalculates', () => {
 // ==========================================
 // Scope/audit_status
 // ==========================================
-console.log('\nScope/audit_status:');
+section('\nScope/audit_status:');
 test('scope.proofreading dynamic', () => {
     const doc = makeDocMap([{text:'T.'}]);
     const j1 = Exporter.buildAuditJson(doc, [], [], {});
@@ -438,7 +447,7 @@ test('final gate requires grammar+visual+style', () => {
 // ==========================================
 // C3 fix: direct quote protection per cell
 // ==========================================
-console.log('\nDirektni citat u ćeliji:');
+section('\nDirektni citat u ćeliji:');
 test('cell with typographic quotes gets PROVERITI for spacing error', () => {
     const tableEl = { type:'table', text:'test', tableId:'t-q',
         rows:[[
@@ -461,7 +470,7 @@ test('cell with typographic quotes gets PROVERITI for spacing error', () => {
 // ==========================================
 // C2 fix: footnote content checks
 // ==========================================
-console.log('\nSadržaj fusnota:');
+section('\nSadržaj fusnota:');
 test('double space in footnote detected', () => {
     const doc = makeDocMap([{text:'Tekst.'}], {footnotes:[{id:'1', text:'Vid. Apijan,  Ilirika 2.', isEmpty:false}]});
     const {findings} = RuleEngine.runAudit(doc, allOpts());
@@ -478,7 +487,7 @@ test('unbalanced bracket in footnote detected', () => {
 // ==========================================
 // C2: endnote bracket check
 // ==========================================
-console.log('\nEndnote provera:');
+section('\nEndnote provera:');
 test('unbalanced bracket in endnote detected', () => {
     const doc = makeDocMap([{text:'Tekst.'}], {footnotes:[], endnotes:[{id:'1', text:'Uporedi (Apijan, Ilirika', isEmpty:false}]});
     const {findings} = RuleEngine.runAudit(doc, allOpts());
@@ -489,7 +498,7 @@ test('unbalanced bracket in endnote detected', () => {
 // ==========================================
 // C4: Primarni/Sekundarni izvori as standalone bib heading
 // ==========================================
-console.log('\nPrimarni/Sekundarni izvori:');
+section('\nPrimarni/Sekundarni izvori:');
 test('"Primarni izvori" recognized as bibliography heading', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Primarni izvori', headingLevel:1},
@@ -542,7 +551,7 @@ testAsync('two identical tables in DOCX get different tableId', async () => {
 // ==========================================
 // Additional tests: ancient source skipped, antičke excluded
 // ==========================================
-console.log('\nAntički izvori:');
+section('\nAntički izvori:');
 test('ancient sources not flagged for missing year', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Bibliografija', headingLevel:1},
@@ -566,7 +575,7 @@ test('electronic sources with URL not flagged for missing year', () => {
 // ==========================================
 // (Identical table hash test replaced by real parser test below)
 // ==========================================
-console.log('\nIdentične tabele:');
+section('\nIdentične tabele:');
 test('two identical rows in same table get different rowId (hash)', () => {
     const id1 = DocumentParser.hashId('table', 'tbl|row|Same');
     const id2 = DocumentParser.hashId('table', 'tbl|row|Same|#2');
@@ -576,7 +585,7 @@ test('two identical rows in same table get different rowId (hash)', () => {
 // ==========================================
 // All export after resolving findings
 // ==========================================
-console.log('\nExport all posle rešavanja:');
+section('\nExport all posle rešavanja:');
 test('all export includes resolved findings with full count', () => {
     const doc = makeDocMap([{text:'T.'}]);
     const findings = [
@@ -595,7 +604,7 @@ test('all export includes resolved findings with full count', () => {
 // ==========================================
 // Journal article not flagged for missing publisher
 // ==========================================
-console.log('\nČlanak u časopisu:');
+section('\nČlanak u časopisu:');
 test('journal article with quoted title not flagged for publisher', () => {
     const doc = makeDocMap([
         {type:'heading', text:'Bibliografija', headingLevel:1},
