@@ -426,20 +426,20 @@ test('scope.proofreading dynamic', () => {
 });
 test('scope.note dynamic', () => {
     const doc = makeDocMap([{text:'T.'}]);
-    const j = Exporter.buildAuditJson(doc, [], [], {brackets:true, aiGrammar:true});
+    const j = Exporter.buildAuditJson(doc, [], [], {brackets:true, grammar:true});
     assert(j.scope.note.includes('gramatička'));
     assert(j.scope.note.includes('determinističke'));
 });
 test('audit_status.style_analysis present', () => {
     const doc = makeDocMap([{text:'T.'}]);
-    const j = Exporter.buildAuditJson(doc, [], [], {aiStyle:true});
+    const j = Exporter.buildAuditJson(doc, [], [], {style:true});
     assert.strictEqual(j.audit_status.style_analysis, 'IZVRŠENA');
 });
 test('final gate requires grammar+visual+style', () => {
     const doc = makeDocMap([{text:'T.'}]);
-    const j1 = Exporter.buildAuditJson(doc, [], [], {aiGrammar:true,visualLayout:true});
+    const j1 = Exporter.buildAuditJson(doc, [], [], {grammar:true,visualLayout:true});
     assert.strictEqual(j1.summary.can_be_marked_final, false, 'Missing style');
-    const j2 = Exporter.buildAuditJson(doc, [], [], {aiGrammar:true,visualLayout:true,aiStyle:true});
+    const j2 = Exporter.buildAuditJson(doc, [], [], {grammar:true,visualLayout:true,style:true});
     assert.strictEqual(j2.summary.can_be_marked_final, true);
 });
 
@@ -746,7 +746,7 @@ test('header finding prevents spacing from passing', () => {
 test('DONE finding does not block final status in all-export', () => {
     const doc = makeDocMap([{text:'T.'}]);
     const findings = [{id:'F-1',category:'A',priority:'OBAVEZNO',confidence:0.9,original:'x',replacement:'y',rationale:'r',status:'DONE',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-1',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null}];
-    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true, aiGrammar:true, visualLayout:true, aiStyle:true});
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true, grammar:true, visualLayout:true, style:true});
     const exported = Exporter.applyExportFilter(json, 'all');
     // DONE finding included in export but does NOT block final status
     assert.strictEqual(exported.findings.length, 1);
@@ -805,7 +805,7 @@ section('\nGate regresija:');
 test('buildAuditJson with all-DONE findings and full caps gives final=true', () => {
     const doc = makeDocMap([{text:'T.'}]);
     const findings = [{id:'F-1',category:'A',priority:'OBAVEZNO',confidence:0.9,original:'x',replacement:'y',rationale:'r',status:'DONE',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-1',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null}];
-    const json = Exporter.buildAuditJson(doc, findings, [], {aiGrammar:true,visualLayout:true,aiStyle:true,spacing:true});
+    const json = Exporter.buildAuditJson(doc, findings, [], {grammar:true,visualLayout:true,style:true,spacing:true});
     assert.strictEqual(json.summary.can_be_marked_final, true, 'All DONE + caps → final');
     assert.strictEqual(json.summary.mandatory_open, 0);
     assert.strictEqual(json.summary.mandatory_total, 1);

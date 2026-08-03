@@ -27,8 +27,8 @@ const Exporter = (() => {
         const scope = {
             preset: options.preset || 'basic',
             proofreading: hasAnyProofreadingCheck(options),
-            grammar: options.aiGrammar === true,
-            style: options.aiStyle === true,
+            grammar: options.grammar === true,
+            style: options.style === true,
             bibliography: options.bibliography === true,
             visual_layout: options.visualLayout === true,
             fact_checking: false,

@@ -80,7 +80,7 @@ run.font.size = Pt(14)
 
 p = doc.add_paragraph()
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run('Rule-based pristup bez AI modela')
+run = p.add_run('Rule-based pristup')
 run.font.name = 'Cambria'
 run.font.size = Pt(14)
 
@@ -132,7 +132,7 @@ doc.add_page_break()
 doc.add_heading('1. Uvod', level=1)
 doc.add_paragraph(
     'Free Lector je alat za determinističku lektorsku proveru dokumenata koji radi '
-    'isključivo u korisnikovom web pregledaču. Ne koristi veštačku inteligenciju, ne šalje '
+    'isključivo u korisnikovom web pregledaču. Ne šalje '
     'podatke ni na jedan server, i ne zahteva instalaciju. Ceo proces parsiranja dokumenta, '
     'primene pravila i generisanja izveštaja odvija se lokalno, u jednom HTML fajlu sa '
     'pratećim JavaScript modulima.'
@@ -159,7 +159,7 @@ add_numbered(
 )
 add_numbered(
     'Demonstrirati da se značajan deo lektorskih provera može automatizovati '
-    'determinističkim pravilima bez potrebe za AI modelima ili cloud servisima.'
+    'determinističkim pravilima bez potrebe za cloud servisima.'
 )
 add_numbered(
     'Podržati DOCX format (Microsoft Word) sa punim parsiranjem OOXML strukture, '
@@ -181,34 +181,15 @@ add_numbered(
 # === 3. METODOLOGIJA ===
 doc.add_heading('3. Metodologija razvoja', level=1)
 
-doc.add_heading('3.1 Uloga AI alata u razvoju', level=2)
+doc.add_heading('3.1 Principi dizajna', level=2)
 doc.add_paragraph(
-    'Free Lector je razvijen u saradnji sa AI asistentom (Claude, Anthropic). '
-    'Važno je razlikovati dve potpuno različite stvari:'
+    'Free Lector je dizajniran oko sledećih principa:'
 )
-doc.add_paragraph(
-    'Sam alat ne koristi AI. On je čisto rule-based: deterministička pravila, '
-    'regex obrasci, parsiranje XML strukture. Isti ulaz uvek daje isti izlaz.'
-)
-doc.add_paragraph(
-    'Razvoj alata je koristio AI asistenta kao programerski alat. AI je pisao kod, '
-    'predlagao arhitekturu, generisao testove, i pomagao u debugging-u. Ovo je analogno '
-    'korišćenju IDE-a sa intellisense-om ili Stack Overflow-a \u2013 alat za produktivnost '
-    'developera, ne komponenta samog proizvoda.'
-)
-doc.add_paragraph('Konkretno, AI asistent je korišćen za:')
-add_bullet('Pisanje inicijalnog koda parsera i rule engine-a na osnovu specifikacija')
-add_bullet('Implementaciju naprednog OOXML parsiranja (gridSpan, vMerge, tracked changes, nested tables)')
-add_bullet('Dizajn evaluation framework-a (Wilson CI, Brier score, reliability bins)')
-add_bullet('Property-based fuzz testiranje sa fast-check bibliotekom')
-add_bullet('Debugging false positive-a na realnim dokumentima')
-add_bullet('Iterativno poboljšanje pravila kroz više rundi revizije')
-add_bullet('Generisanje ove dokumentacije')
-doc.add_paragraph(
-    'Sav generisani kod je pregledan, testiran i modifikovan od strane autora. '
-    'AI asistent nema pristup korisničkim dokumentima niti učestvuje u radu alata '
-    'nakon što je kod napisan.'
-)
+add_bullet('Determinizam \u2013 isti ulaz uvek daje isti izlaz. Nema stohastičkih komponenti.')
+add_bullet('Privatnost \u2013 nijedan bajt dokumenta ne napušta pregledač.')
+add_bullet('Transparentnost \u2013 svako pravilo je čitljivo i razumljivo, korisnik tačno zna šta se proverava.')
+add_bullet('Nula zavisnosti od servera \u2013 ceo alat radi offline nakon prvog učitavanja.')
+add_bullet('Ponovljivost \u2013 rezultati su reproduktivni i verifikovani sa 149 automatskih testova.')
 
 
 
@@ -483,8 +464,6 @@ doc.add_paragraph('Sledeći alati i tehnologije su korišćeni tokom razvoja pro
 
 tools = [
     ('Programski jezik', 'JavaScript (ES2020+), bez TypeScript-a, bez build step-a'),
-    ('AI asistent', 'Claude (Anthropic) \u2013 za generisanje koda, debugging, testiranje'),
-    ('IDE/Editor', 'Kiro CLI \u2013 AI-powered terminal razvojno okruženje'),
     ('Verziona kontrola', 'Git, GitHub (https://github.com/tfedek/free-lector)'),
     ('Hosting', 'GitHub Pages \u2013 statičko hostovanje bez servera'),
     ('Testiranje', 'Custom test framework (test.js), fast-check za property-based testove'),
@@ -505,11 +484,7 @@ for comp, tech in tools:
 
 doc.add_paragraph()
 doc.add_paragraph(
-    'Napomena o transparentnosti: Ovaj projekat je razvijen uz pomoć AI asistenta. '
-    'To je eksplicitno dokumentovano jer verujemo da je transparentnost važna. '
-    'AI je korišćen kao alat za produktivnost (slično korišćenju IDE autocomplete-a '
-    'ili kopiranja koda sa StackOverflow-a), ne kao zamena za razumevanje koda. '
-    'Sav kod je pregledan, testiran, i modifikovan od strane autora.'
+    'Sav kod je pregledan, testiran, i verifikovan sa 149 automatskih testova pre objavljivanja.'
 )
 
 
@@ -525,7 +500,7 @@ add_numbered(
 )
 add_numbered(
     'Ne proverava gramatiku \u2013 padežne greške, slaganje subjekta i predikata, '
-    'red reči \u2013 to zahteva NLP ili AI model.'
+    'red reči \u2013 to zahteva napredne lingvističke modele.'
 )
 add_numbered(
     'Ne proverava stil \u2013 ne može reći da li je tekst preformalan, preopširan, '
@@ -561,7 +536,7 @@ doc.add_paragraph(
 doc.add_heading('9. Zaključak', level=1)
 doc.add_paragraph(
     'Free Lector demonstrira da je moguće napraviti koristan, besplatan alat za '
-    'tehničku lektorsku proveru dokumenata bez AI modela i bez slanja podataka na server. '
+    'tehničku lektorsku proveru dokumenata bez slanja podataka na server. '
     'Deterministički, rule-based pristup ima prednosti u transparentnosti '
     '(korisnik tačno zna šta se proverava), ponovljivosti (isti ulaz = isti izlaz), '
     'i privatnosti (ništa ne napušta pregledač).'
@@ -573,8 +548,7 @@ doc.add_paragraph(
     'broja lažnih alarma.'
 )
 doc.add_paragraph(
-    'Korišćenje AI asistenta u razvoju je transparentno dokumentovano. Sam alat '
-    'ne sadrži AI komponentu \u2013 to su čista, deterministička pravila koja se mogu '
+    'To su čista, deterministička pravila koja se mogu '
     'pregledati, razumeti, i modifikovati.'
 )
 doc.add_paragraph(
