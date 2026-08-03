@@ -24,3 +24,7 @@ const FULL_PRESET = {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { BASIC_PRESET, FULL_PRESET };
 }
+if (typeof window !== 'undefined') {
+    window.BASIC_PRESET = BASIC_PRESET;
+    window.FULL_PRESET = FULL_PRESET;
+}

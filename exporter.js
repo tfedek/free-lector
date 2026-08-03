@@ -151,6 +151,7 @@ const Exporter = (() => {
             ['Version ID', auditJson.document.version_id],
             ['Datum audita', new Date().toLocaleDateString('sr-Latn-RS')],
             ['Režim', auditJson.document.audit_mode],
+            ['Preset', auditJson.scope.preset],
             ['Broj reči', auditJson.document.word_count],
             ['Broj pasusa', auditJson.document.paragraph_count],
             ['Broj tabela', auditJson.document.table_count],
@@ -251,6 +252,7 @@ const Exporter = (() => {
         lines.push(`**Document ID:** ${d.document_id}  `);
         lines.push(`**Version ID:** ${d.version_id}  `);
         lines.push(`**Režim:** ${d.audit_mode}  `);
+        lines.push(`**Preset:** ${auditJson.scope.preset}  `);
         lines.push(`**Datum:** ${new Date().toLocaleDateString('sr-Latn-RS')}`);
         lines.push('');
         lines.push('## Status audita');

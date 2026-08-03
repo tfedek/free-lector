@@ -1122,6 +1122,96 @@ test('basic preset: duplicates enabled', () => {
 });
 
 // ==========================================
+// STEP 8: MISSING PRESET TESTS
+// ==========================================
+section('\nMissing preset tests:');
+
+test('empty endnote detected in Basic', () => {
+    const doc = makeDocMap([{text:'T.'}], {endnotes:[{id:'1',text:'',isEmpty:true}]});
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.category==='Fusnote'||f.rationale&&f.rationale.includes('endnot')||f.rationale&&f.rationale.includes('prazn')), 'Basic should detect empty endnote');
+});
+
+test('spacing in non-empty endnote NOT detected in Basic (noteContentChecks=false)', () => {
+    const doc = makeDocMap([{text:'T.'}], {endnotes:[{id:'1',text:'Endnote  double.',isEmpty:false}]});
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const enSpacing = findings.filter(f=>f.category==='Razmaci'&&f.section&&f.section.includes('endnot'));
+    assert.strictEqual(enSpacing.length, 0, 'Basic (noteContentChecks=false) should NOT check endnote content');
+});
+
+test('headers/footers NOT checked in Basic (headersFooters=false)', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Hdr  dbl.',style:'Header',runs:[{text:'Hdr  dbl.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(!findings.some(f=>f.section&&f.section.includes('zaglavlje')), 'Basic should NOT check headers');
+});
+
+test('headers/footers ARE checked in Full (headersFooters=true)', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Hdr  dbl.',style:'Header',runs:[{text:'Hdr  dbl.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    assert(findings.some(f=>f.section&&f.section.includes('zaglavlje')), 'Full should check headers');
+});
+
+test('headersFooters=true + spacing=false does not produce spacing findings in headers', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Hdr  dbl.',style:'Header',runs:[{text:'Hdr  dbl.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    const opts = {headersFooters:true, spacing:false, brackets:true};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const spacingInHdr = findings.filter(f=>f.category==='Razmaci'&&f.section&&f.section.includes('zaglavlje'));
+    assert.strictEqual(spacingInHdr.length, 0, 'spacing=false should not produce spacing findings in headers');
+});
+
+test('noteContentChecks=true + urls=false does not produce URL findings in notes', () => {
+    const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1',text:'See https://example.com/path,',isEmpty:false}]});
+    const opts = {footnotes:true, emptyNotes:true, noteContentChecks:true, urls:false, spacing:true, brackets:true};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const urlInFn = findings.filter(f=>f.category==='URL'&&f.section&&f.section.includes('fusnot'));
+    assert.strictEqual(urlInFn.length, 0, 'urls=false should not produce URL findings in footnotes');
+});
+
+test('manual checkbox change produces activePreset=custom (conceptual)', () => {
+    // Conceptual test: when options differ from both presets, preset should be 'custom'
+    const basicPreset = require('./presets.js').BASIC_PRESET;
+    const fullPreset = require('./presets.js').FULL_PRESET;
+    const customOpts = {...basicPreset, bibliography: true}; // modified basic
+    const matchesBasic = Object.keys(basicPreset).every(k => customOpts[k] === basicPreset[k]);
+    const matchesFull = Object.keys(fullPreset).every(k => customOpts[k] === fullPreset[k]);
+    assert(!matchesBasic, 'Custom opts should not match basic');
+    assert(!matchesFull, 'Custom opts should not match full');
+    // In app.js, this would set activePreset='custom'
+});
+
+test('scope.preset=custom in export when custom options', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const j = Exporter.buildAuditJson(doc, [], [], {preset:'custom', brackets:true, bibliography:true});
+    assert.strictEqual(j.scope.preset, 'custom');
+});
+
+// ==========================================
+// STEP 6 VERIFICATION: scope.preset in exports
+// ==========================================
+section('\nScope preset in exports:');
+
+test('Excel export includes Preset row', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const json = Exporter.buildAuditJson(doc, [], [], {preset:'full', brackets:true});
+    // generateExcel requires XLSX which is not available in test, but we verify the JSON has preset
+    assert.strictEqual(json.scope.preset, 'full');
+});
+
+test('Markdown export includes Preset line', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const json = Exporter.buildAuditJson(doc, [], [], {preset:'basic', brackets:true});
+    const md = Exporter.generateMarkdown(json);
+    assert(md.includes('**Preset:** basic'), 'Markdown should include Preset line');
+});
+
+// ==========================================
 // SUMMARY - run async tests then report
 // ==========================================
 

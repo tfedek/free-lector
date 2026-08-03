@@ -3,7 +3,13 @@
 
 /**
  * Evaluate confidence metrics from labeled samples.
- * Reads labels.csv and generates precision/recall/F1 per category.
+ * Reads labels.csv and generates precision, Wilson CI, and Brier score per rule_id.
+ *
+ * Ova evaluacija meri preciznost prijavljenih nalaza.
+ * Ne meri recall, F1 niti greške koje alat nije pronašao.
+ *
+ * Nalazi iz istog dokumenta nisu statistički nezavisni.
+ * Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.
  *
  * Usage: node evaluation/evaluate-confidence.js [path-to-labels.csv]
  */
@@ -14,88 +20,292 @@ const path = require('path');
 const labelsPath = process.argv[2] || path.join(__dirname, 'labels.csv');
 const reportDir = path.join(__dirname, 'report');
 
-if (!fs.existsSync(labelsPath)) {
-    console.error(`Error: Labels file not found: ${labelsPath}`);
-    process.exit(1);
+// ==========================================
+// CSV PARSING (handles quoted fields, CRLF/LF, commas in quotes)
+// ==========================================
+function parseCSV(text) {
+    const lines = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') {
+            inQuotes = !inQuotes;
+            current += ch;
+        } else if ((ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) && !inQuotes) {
+            lines.push(current);
+            current = '';
+            if (ch === '\r') i++; // skip \n after \r
+        } else if (ch === '\r' && !inQuotes) {
+            lines.push(current);
+            current = '';
+        } else {
+            current += ch;
+        }
+    }
+    if (current.length > 0) lines.push(current);
+
+    if (lines.length === 0) return { header: [], rows: [] };
+
+    const header = splitCSVLine(lines[0]);
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim().length === 0) continue;
+        rows.push({ lineNumber: i + 1, fields: splitCSVLine(lines[i]) });
+    }
+    return { header, rows };
 }
 
-// Parse CSV
-const raw = fs.readFileSync(labelsPath, 'utf-8').trim();
-const lines = raw.split('\n');
-const header = lines[0].split(',');
+function splitCSVLine(line) {
+    const fields = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+                current += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (ch === ',' && !inQuotes) {
+            fields.push(current);
+            current = '';
+        } else {
+            current += ch;
+        }
+    }
+    fields.push(current);
+    return fields;
+}
 
-const requiredCols = ['finding_id', 'category', 'human_label'];
-for (const col of requiredCols) {
-    if (!header.includes(col)) {
-        console.error(`Error: Missing required column "${col}" in CSV header.`);
+// ==========================================
+// WILSON CONFIDENCE INTERVAL
+// ==========================================
+function wilsonCI(successes, total, z = 1.96) {
+    if (total === 0) return { lower: 0, upper: 0, center: 0, width: 0 };
+    const p = successes / total;
+    const n = total;
+    const denom = 1 + z * z / n;
+    const center = (p + z * z / (2 * n)) / denom;
+    const margin = (z / denom) * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+    const lower = Math.max(0, center - margin);
+    const upper = Math.min(1, center + margin);
+    return { lower, upper, center, width: upper - lower };
+}
+
+// ==========================================
+// MAIN
+// ==========================================
+function run() {
+    if (!fs.existsSync(labelsPath)) {
+        console.error(`Error: Labels file not found: ${labelsPath}`);
         process.exit(1);
     }
+
+    const raw = fs.readFileSync(labelsPath, 'utf-8');
+    const { header, rows } = parseCSV(raw);
+
+    // Validate required columns
+    const requiredCols = ['rule_id', 'rule_version', 'version_id', 'label', 'predicted_confidence', 'finding_id'];
+    for (const col of requiredCols) {
+        if (!header.includes(col)) {
+            console.error(`Error: Missing required column "${col}" in CSV header.`);
+            process.exit(1);
+        }
+    }
+
+    const colIdx = {};
+    header.forEach((col, i) => { colIdx[col] = i; });
+
+    const records = [];
+    let hasErrors = false;
+
+    for (const { lineNumber, fields } of rows) {
+        const label = fields[colIdx['label']];
+        const confidence = fields[colIdx['predicted_confidence']];
+        const ruleId = fields[colIdx['rule_id']];
+        const ruleVersion = fields[colIdx['rule_version']];
+        const versionId = fields[colIdx['version_id']];
+
+        // Validate label is 0 or 1
+        if (label !== '0' && label !== '1') {
+            console.error(`Error (row ${lineNumber}): label must be 0 or 1, got "${label}"`);
+            hasErrors = true;
+            continue;
+        }
+
+        // Validate predicted_confidence is finite 0-1
+        const conf = parseFloat(confidence);
+        if (!Number.isFinite(conf) || conf < 0 || conf > 1) {
+            console.error(`Error (row ${lineNumber}): predicted_confidence must be a finite number 0-1, got "${confidence}"`);
+            hasErrors = true;
+            continue;
+        }
+
+        // Validate rule_id, rule_version, version_id not empty
+        if (!ruleId || ruleId.trim().length === 0) {
+            console.error(`Error (row ${lineNumber}): rule_id must not be empty`);
+            hasErrors = true;
+            continue;
+        }
+        if (!ruleVersion || ruleVersion.trim().length === 0) {
+            console.error(`Error (row ${lineNumber}): rule_version must not be empty`);
+            hasErrors = true;
+            continue;
+        }
+        if (!versionId || versionId.trim().length === 0) {
+            console.error(`Error (row ${lineNumber}): version_id must not be empty`);
+            hasErrors = true;
+            continue;
+        }
+
+        records.push({
+            rule_id: ruleId.trim(),
+            label: parseInt(label, 10),
+            predicted_confidence: conf,
+            finding_id: (fields[colIdx['finding_id']] || '').trim(),
+        });
+    }
+
+    if (records.length === 0 && !hasErrors) {
+        console.log('No labeled samples found. Add rows to labels.csv to run evaluation.');
+        process.exit(0);
+    }
+
+    if (records.length === 0) {
+        process.exit(1);
+    }
+
+    // Group by rule_id
+    const byRule = {};
+    for (const r of records) {
+        if (!byRule[r.rule_id]) byRule[r.rule_id] = [];
+        byRule[r.rule_id].push(r);
+    }
+
+    const ruleResults = {};
+    const allLabels = [];
+    const allConfidences = [];
+
+    for (const [ruleId, recs] of Object.entries(byRule)) {
+        const tp = recs.filter(r => r.label === 1).length;
+        const fp = recs.filter(r => r.label === 0).length;
+        const n = tp + fp;
+        const precision = n > 0 ? tp / n : 0;
+        const wilson = wilsonCI(tp, n);
+
+        // Brier score
+        const brier = recs.reduce((sum, r) => sum + Math.pow(r.predicted_confidence - r.label, 2), 0) / n;
+
+        // Small sample warning
+        let sampleWarning = null;
+        if (n < 10) sampleWarning = 'Veoma mali uzorak';
+        else if (n < 30) sampleWarning = 'Mali uzorak';
+
+        ruleResults[ruleId] = { tp, fp, n, precision, wilson, brier, sampleWarning };
+        allLabels.push(...recs.map(r => r.label));
+        allConfidences.push(...recs.map(r => r.predicted_confidence));
+    }
+
+    // Overall Brier score
+    const overallBrier = allLabels.reduce((sum, label, i) =>
+        sum + Math.pow(allConfidences[i] - label, 2), 0) / allLabels.length;
+
+    // Reliability bins: [0,0.1), [0.1,0.2), ..., [0.9,1.0]
+    const bins = [];
+    for (let i = 0; i < 10; i++) {
+        bins.push({ lower: i * 0.1, upper: (i + 1) * 0.1, items: [] });
+    }
+    for (let i = 0; i < allConfidences.length; i++) {
+        const c = allConfidences[i];
+        // 1.0 goes in last bin [0.9, 1.0]
+        let binIdx = Math.min(9, Math.floor(c * 10));
+        if (c === 1.0) binIdx = 9;
+        bins[binIdx].items.push({ confidence: c, label: allLabels[i] });
+    }
+
+    const reliabilityBins = bins
+        .filter(b => b.items.length > 0)
+        .map(b => {
+            const n = b.items.length;
+            const meanPredicted = b.items.reduce((s, x) => s + x.confidence, 0) / n;
+            const observedCorrect = b.items.filter(x => x.label === 1).length / n;
+            const calibrationDiff = meanPredicted - observedCorrect;
+            const brierContribution = b.items.reduce((s, x) =>
+                s + Math.pow(x.confidence - x.label, 2), 0) / allLabels.length;
+            return {
+                range: `[${b.lower.toFixed(1)},${b.upper === 1.0 ? '1.0]' : b.upper.toFixed(1) + ')'}`,
+                n, meanPredicted, observedCorrect, calibrationDiff, brierContribution
+            };
+        });
+
+    // Generate reports
+    if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+
+    const jsonReport = {
+        generated: new Date().toISOString(),
+        disclaimer: 'Ova evaluacija meri preciznost prijavljenih nalaza. Ne meri recall, F1 niti greške koje alat nije pronašao.',
+        correlation_warning: 'Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.',
+        total_samples: records.length,
+        overall_brier: overallBrier,
+        per_rule: ruleResults,
+        reliability_bins: reliabilityBins,
+    };
+
+    const jsonPath = path.join(reportDir, 'confidence-report.json');
+    fs.writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2));
+
+    // Markdown report
+    const md = [];
+    md.push('# Confidence Evaluation Report');
+    md.push('');
+    md.push('> Ova evaluacija meri preciznost prijavljenih nalaza. Ne meri recall, F1 niti greške koje alat nije pronašao.');
+    md.push('');
+    md.push('> Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.');
+    md.push('');
+    md.push(`**Ukupno obeleženih uzoraka:** ${records.length}`);
+    md.push(`**Ukupni Brier score:** ${overallBrier.toFixed(4)}`);
+    md.push('');
+    md.push('## Per-rule results');
+    md.push('');
+    md.push('| Rule ID | TP | FP | N | Precision | Wilson CI | Width | Brier | Warning |');
+    md.push('|---------|----|----|---|-----------|-----------|-------|-------|---------|');
+    for (const [ruleId, r] of Object.entries(ruleResults)) {
+        md.push(`| ${ruleId} | ${r.tp} | ${r.fp} | ${r.n} | ${(r.precision * 100).toFixed(1)}% | [${r.wilson.lower.toFixed(3)}, ${r.wilson.upper.toFixed(3)}] | ${r.wilson.width.toFixed(3)} | ${r.brier.toFixed(4)} | ${r.sampleWarning || '-'} |`);
+    }
+    md.push('');
+    md.push('## Reliability diagram');
+    md.push('');
+    md.push('| Bin | N | Mean predicted | Observed correct | Calibration diff | Brier contribution |');
+    md.push('|-----|---|----------------|-----------------|-----------------|-------------------|');
+    for (const b of reliabilityBins) {
+        md.push(`| ${b.range} | ${b.n} | ${b.meanPredicted.toFixed(3)} | ${b.observedCorrect.toFixed(3)} | ${b.calibrationDiff.toFixed(3)} | ${b.brierContribution.toFixed(4)} |`);
+    }
+    md.push('');
+
+    const mdPath = path.join(reportDir, 'confidence-report.md');
+    fs.writeFileSync(mdPath, md.join('\n'));
+
+    // Console output
+    console.log('\n=== Confidence Evaluation ===\n');
+    console.log('Ova evaluacija meri preciznost prijavljenih nalaza. Ne meri recall, F1 niti greške koje alat nije pronašao.');
+    console.log('Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.\n');
+    console.log(`Total samples: ${records.length}`);
+    console.log(`Overall Brier: ${overallBrier.toFixed(4)}\n`);
+    for (const [ruleId, r] of Object.entries(ruleResults)) {
+        console.log(`  ${ruleId}: precision=${(r.precision * 100).toFixed(1)}% (${r.tp}/${r.n}) Wilson=[${r.wilson.lower.toFixed(3)},${r.wilson.upper.toFixed(3)}] Brier=${r.brier.toFixed(4)}${r.sampleWarning ? ` [${r.sampleWarning}]` : ''}`);
+    }
+    console.log(`\nReports saved: ${jsonPath}, ${mdPath}`);
 }
 
-const records = [];
-for (let i = 1; i < lines.length; i++) {
-    const parts = lines[i].split(',');
-    if (parts.length < 3) continue;
-    const record = {};
-    header.forEach((col, idx) => { record[col.trim()] = (parts[idx] || '').trim(); });
-    if (!record.finding_id || !record.human_label) continue;
-    records.push(record);
+// Export for testing
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { parseCSV, splitCSVLine, wilsonCI, run };
 }
 
-if (records.length === 0) {
-    console.error('Error: No valid records found in labels.csv');
-    process.exit(1);
+// Run if called directly
+if (require.main === module) {
+    run();
 }
-
-// Compute metrics per category
-const categories = [...new Set(records.map(r => r.category))].sort();
-const results = {};
-let totalTP = 0, totalFP = 0, totalFN = 0;
-
-for (const cat of categories) {
-    const catRecords = records.filter(r => r.category === cat);
-    const tp = catRecords.filter(r => r.human_label === 'TP').length;
-    const fp = catRecords.filter(r => r.human_label === 'FP').length;
-    const fn = catRecords.filter(r => r.human_label === 'FN').length;
-    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-    const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    const f1 = precision + recall > 0 ? 2 * precision * recall / (precision + recall) : 0;
-
-    results[cat] = { tp, fp, fn, precision, recall, f1, total: catRecords.length };
-    totalTP += tp;
-    totalFP += fp;
-    totalFN += fn;
-}
-
-// Overall metrics
-const overallPrecision = totalTP + totalFP > 0 ? totalTP / (totalTP + totalFP) : 0;
-const overallRecall = totalTP + totalFN > 0 ? totalTP / (totalTP + totalFN) : 0;
-const overallF1 = overallPrecision + overallRecall > 0
-    ? 2 * overallPrecision * overallRecall / (overallPrecision + overallRecall) : 0;
-
-// Print report
-console.log('\n=== Free Lector Confidence Evaluation ===\n');
-console.log(`Total labeled samples: ${records.length}`);
-console.log(`Overall: Precision=${(overallPrecision * 100).toFixed(1)}% Recall=${(overallRecall * 100).toFixed(1)}% F1=${(overallF1 * 100).toFixed(1)}%\n`);
-console.log('Per category:');
-console.log('-'.repeat(70));
-console.log(`${'Category'.padEnd(25)} ${'TP'.padStart(4)} ${'FP'.padStart(4)} ${'FN'.padStart(4)} ${'Prec'.padStart(7)} ${'Rec'.padStart(7)} ${'F1'.padStart(7)}`);
-console.log('-'.repeat(70));
-
-for (const cat of categories) {
-    const r = results[cat];
-    console.log(`${cat.padEnd(25)} ${String(r.tp).padStart(4)} ${String(r.fp).padStart(4)} ${String(r.fn).padStart(4)} ${(r.precision * 100).toFixed(1).padStart(6)}% ${(r.recall * 100).toFixed(1).padStart(6)}% ${(r.f1 * 100).toFixed(1).padStart(6)}%`);
-}
-console.log('-'.repeat(70));
-
-// Write report to file
-if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
-const reportPath = path.join(reportDir, `report-${new Date().toISOString().slice(0, 10)}.json`);
-const report = {
-    date: new Date().toISOString(),
-    total_samples: records.length,
-    overall: { precision: overallPrecision, recall: overallRecall, f1: overallF1 },
-    per_category: results,
-};
-fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-console.log(`\nReport saved: ${reportPath}`);

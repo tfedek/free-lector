@@ -1,3 +1,3 @@
-finding_id,category,human_label,confidence_override,comment
-F-0001,Razmaci,TP,,Dvostruki razmak ispravno detektovan
-F-0002,Zagrade,FP,,Zagrada je deo URL-a - lažni pozitiv
+document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note
+doc-1,v-a1b2c3,duplicate_words_body,f-17,p-14,0.95,1,r4-82tests,reviewer-1,
+doc-1,v-a1b2c3,bibliography_missing_year,f-18,p-22,0.75,0,r4-82tests,reviewer-1,Antički izvor

@@ -47,20 +47,9 @@
     let activePreset = 'basic';
     let applyingPreset = false;
 
-    const BASIC_PRESET = {
-        brackets: true, spacing: true, scriptMix: true, duplicates: true, quotes: true,
-        emptyNotes: true, noteContentChecks: false, footnotes: true,
-        toc: false, bibliography: false, capsWords: false, numbering: false,
-        greek: false, markdown: false, urls: false, emptyHeadings: false, repetition: false,
-        headersFooters: false
-    };
-    const FULL_PRESET = {
-        brackets: true, spacing: true, scriptMix: true, duplicates: true, quotes: true,
-        emptyNotes: true, noteContentChecks: true, footnotes: true,
-        toc: true, bibliography: true, capsWords: true, numbering: true,
-        greek: true, markdown: true, urls: true, emptyHeadings: true, repetition: true,
-        headersFooters: true
-    };
+    // Use global presets from presets.js (loaded via <script> before app.js)
+    const BASIC_PRESET = window.BASIC_PRESET;
+    const FULL_PRESET = window.FULL_PRESET;
 
     function applyPreset(name) {
         applyingPreset = true;

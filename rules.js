@@ -1007,6 +1007,8 @@ const RuleEngine = (() => {
     // ==========================================
     // HELPERS
     // ==========================================
+    // Confidence is a heuristic ranking, not an empirically calibrated
+    // probability of correctness.
     function makeFinding({ element, category, priority, confidence, original,
         replacement, rationale, autoFixable = false, globalPattern = false,
         requiresSourceVerification = false,
