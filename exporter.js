@@ -198,6 +198,7 @@ const Exporter = (() => {
             'Direktan citat', 'Provera izvora', 'Auto-fix',
             'Globalno', 'Status',
             'Table ID', 'Row ID', 'Cell ID', 'Red', 'Kolona',
+            'Rule ID',
             'Napomena'
         ];
         const findingsRows = auditJson.findings.map((f, i) => [
@@ -211,12 +212,13 @@ const Exporter = (() => {
             f.tableId || '', f.rowId || '', f.cellId || '',
             f.rowIndex != null ? f.rowIndex + 1 : '',
             f.columnIndex != null ? f.columnIndex + 1 : '',
+            f.rule_id || '',
             '',
         ]);
         const ws2 = XLSX.utils.aoa_to_sheet([findingsHeader, ...findingsRows]);
         ws2['!cols'] = [
             {wch:4},{wch:8},{wch:20},{wch:10},{wch:15},{wch:12},{wch:6},{wch:35},{wch:35},{wch:30},
-            {wch:6},{wch:6},{wch:6},{wch:6},{wch:10},{wch:12},{wch:12},{wch:12},{wch:4},{wch:4},{wch:20},
+            {wch:6},{wch:6},{wch:6},{wch:6},{wch:10},{wch:12},{wch:12},{wch:12},{wch:4},{wch:4},{wch:20},{wch:20},
         ];
         XLSX.utils.book_append_sheet(wb, ws2, 'Nalazi');
 
@@ -283,7 +285,7 @@ const Exporter = (() => {
             }
             lines.push(`- **Original:** \`${escMd(f.original)}\``);
             lines.push(`- **Ispravka:** \`${escMd(f.replacement)}\``);
-            lines.push(`- ${escMd(f.rationale)} (pouzdanost: ${Math.round(f.confidence*100)}%)`);
+            lines.push(`- ${escMd(f.rationale)} (pouzdanost: ${Math.round(f.confidence*100)}%, rule_id: ${f.rule_id || 'unknown'})`);
             lines.push('');
         });
 

@@ -61,18 +61,49 @@ function resolveZ(confidenceStr, explicitZ) {
 function main() {
     const pStr = getArg('p', '0.5');
     const marginStr = getArg('margin', '0.05');
-    const confidenceStr = getArg('confidence', '0.95');
+    const confidenceStr = getArg('confidence', null);
     const findingsPerDocStr = getArg('findings-per-document', '5');
     const designEffectStr = getArg('design-effect', '1');
     const explicitZStr = getArg('z', null);
 
-    const p = parseFloat(pStr);
-    const margin = parseFloat(marginStr);
-    const z = resolveZ(confidenceStr, explicitZStr);
-    const findingsPerDocument = parseFloat(findingsPerDocStr);
-    const designEffect = parseFloat(designEffectStr);
+    // Reject simultaneous --confidence and --z
+    if (confidenceStr !== null && explicitZStr !== null) {
+        console.error('Greška: --confidence i --z se ne mogu koristiti istovremeno.');
+        process.exit(1);
+    }
+
+    // Check for arguments without values
+    for (let i = 0; i < args.length; i++) {
+        if (args[i].startsWith('--')) {
+            const name = args[i].substring(2);
+            if (['p', 'margin', 'confidence', 'findings-per-document', 'design-effect', 'z'].includes(name)) {
+                if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+                    console.error(`Greška: argument --${name} zahteva vrednost.`);
+                    process.exit(1);
+                }
+            }
+        }
+    }
+
+    const p = Number(pStr);
+    const margin = Number(marginStr);
+    const findingsPerDocument = Number(findingsPerDocStr);
+    const designEffect = Number(designEffectStr);
+
+    if (!Number.isFinite(p)) { console.error(`Greška: --p mora biti konačan broj, dobijeno "${pStr}".`); process.exit(1); }
+    if (!Number.isFinite(margin)) { console.error(`Greška: --margin mora biti konačan broj, dobijeno "${marginStr}".`); process.exit(1); }
+    if (!Number.isFinite(findingsPerDocument)) { console.error(`Greška: --findings-per-document mora biti konačan broj, dobijeno "${findingsPerDocStr}".`); process.exit(1); }
+    if (!Number.isFinite(designEffect)) { console.error(`Greška: --design-effect mora biti konačan broj, dobijeno "${designEffectStr}".`); process.exit(1); }
+
+    const z = resolveZ(confidenceStr || '0.95', explicitZStr);
+    if (!Number.isFinite(z)) { console.error(`Greška: z-score mora biti konačan broj.`); process.exit(1); }
 
     const result = calculateSampleSize({ p, margin, z, findingsPerDocument, designEffect });
+
+    if (!Number.isFinite(result.requiredFindings) || !Number.isFinite(result.estimatedDocuments)) {
+        console.error('Greška: izračun je proizveo nevažeći rezultat (NaN/Infinity).');
+        process.exit(1);
+    }
 
     console.log('\n=== Sample Size Calculator ===\n');
     console.log(`p (expected precision):     ${p}`);
@@ -87,6 +118,7 @@ function main() {
 
     if (designEffect === 1) {
         console.log('\nOvo je optimistična donja procena koja pretpostavlja nezavisne nalaze.');
+        console.log('Nalazi unutar istog dokumenta verovatno su međusobno korelisani.');
     }
 }
 

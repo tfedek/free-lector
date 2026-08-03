@@ -105,13 +105,30 @@ function run() {
     }
 
     const raw = fs.readFileSync(labelsPath, 'utf-8');
+
+    // Detect unclosed quotes
+    let inQuotes = false;
+    for (let i = 0; i < raw.length; i++) {
+        if (raw[i] === '"') inQuotes = !inQuotes;
+    }
+    if (inQuotes) {
+        console.error('Greška: CSV sadrži nezatvorene navodnike.');
+        process.exit(1);
+    }
+
     const { header, rows } = parseCSV(raw);
+
+    // Require exactly 10 columns in header
+    if (header.length !== 10) {
+        console.error(`Greška: zaglavlje mora imati tačno 10 kolona, pronađeno ${header.length}.`);
+        process.exit(1);
+    }
 
     // Validate required columns
     const requiredCols = ['rule_id', 'rule_version', 'version_id', 'label', 'predicted_confidence', 'finding_id'];
     for (const col of requiredCols) {
         if (!header.includes(col)) {
-            console.error(`Error: Missing required column "${col}" in CSV header.`);
+            console.error(`Greška: nedostaje obavezna kolona "${col}" u zaglavlju CSV-a.`);
             process.exit(1);
         }
     }
@@ -123,6 +140,25 @@ function run() {
     let hasErrors = false;
 
     for (const { lineNumber, fields } of rows) {
+        // Equal column count per row
+        if (fields.length !== header.length) {
+            console.error(`Greška (red ${lineNumber}): očekivano ${header.length} kolona, pronađeno ${fields.length}.`);
+            hasErrors = true;
+            continue;
+        }
+
+        // All fields except 'note' must be non-empty
+        const noteIdx = colIdx['note'];
+        for (let i = 0; i < fields.length; i++) {
+            if (i === noteIdx) continue;
+            if (!fields[i] || fields[i].trim().length === 0) {
+                console.error(`Greška (red ${lineNumber}): kolona "${header[i]}" ne sme biti prazna.`);
+                hasErrors = true;
+                break;
+            }
+        }
+        if (hasErrors && records.length === 0) continue;
+
         const label = fields[colIdx['label']];
         const confidence = fields[colIdx['predicted_confidence']];
         const ruleId = fields[colIdx['rule_id']];
@@ -131,51 +167,54 @@ function run() {
 
         // Validate label is 0 or 1
         if (label !== '0' && label !== '1') {
-            console.error(`Error (row ${lineNumber}): label must be 0 or 1, got "${label}"`);
+            console.error(`Greška (red ${lineNumber}): label mora biti 0 ili 1, dobijeno "${label}".`);
             hasErrors = true;
             continue;
         }
 
-        // Validate predicted_confidence is finite 0-1
-        const conf = parseFloat(confidence);
+        // Validate predicted_confidence is finite 0-1 (use Number not parseFloat)
+        const conf = Number(confidence);
         if (!Number.isFinite(conf) || conf < 0 || conf > 1) {
-            console.error(`Error (row ${lineNumber}): predicted_confidence must be a finite number 0-1, got "${confidence}"`);
+            console.error(`Greška (red ${lineNumber}): predicted_confidence mora biti konačan broj 0-1, dobijeno "${confidence}".`);
             hasErrors = true;
             continue;
         }
 
         // Validate rule_id, rule_version, version_id not empty
         if (!ruleId || ruleId.trim().length === 0) {
-            console.error(`Error (row ${lineNumber}): rule_id must not be empty`);
+            console.error(`Greška (red ${lineNumber}): rule_id ne sme biti prazan.`);
             hasErrors = true;
             continue;
         }
         if (!ruleVersion || ruleVersion.trim().length === 0) {
-            console.error(`Error (row ${lineNumber}): rule_version must not be empty`);
+            console.error(`Greška (red ${lineNumber}): rule_version ne sme biti prazan.`);
             hasErrors = true;
             continue;
         }
         if (!versionId || versionId.trim().length === 0) {
-            console.error(`Error (row ${lineNumber}): version_id must not be empty`);
+            console.error(`Greška (red ${lineNumber}): version_id ne sme biti prazan.`);
             hasErrors = true;
             continue;
         }
 
         records.push({
             rule_id: ruleId.trim(),
+            rule_version: ruleVersion.trim(),
             label: parseInt(label, 10),
             predicted_confidence: conf,
             finding_id: (fields[colIdx['finding_id']] || '').trim(),
         });
     }
 
-    if (records.length === 0 && !hasErrors) {
-        console.log('No labeled samples found. Add rows to labels.csv to run evaluation.');
-        process.exit(0);
+    // If ANY invalid row, exit without generating report
+    if (hasErrors) {
+        console.error('Evaluacija prekinuta zbog grešaka u ulaznim podacima.');
+        process.exit(1);
     }
 
     if (records.length === 0) {
-        process.exit(1);
+        console.log('Nema obeleženih uzoraka. Dodajte redove u labels.csv za pokretanje evaluacije.');
+        process.exit(0);
     }
 
     // Group by rule_id
@@ -201,10 +240,13 @@ function run() {
 
         // Small sample warning
         let sampleWarning = null;
-        if (n < 10) sampleWarning = 'Veoma mali uzorak';
-        else if (n < 30) sampleWarning = 'Mali uzorak';
+        if (n < 10) sampleWarning = 'Veoma mali uzorak — rezultati nepouzdani';
+        else if (n < 30) sampleWarning = 'Mali uzorak — širok interval poverenja';
 
-        ruleResults[ruleId] = { tp, fp, n, precision, wilson, brier, sampleWarning };
+        // Collect rule_versions
+        const rule_versions = [...new Set(recs.map(r => r.rule_version))];
+
+        ruleResults[ruleId] = { tp, fp, n, precision, wilson, brier, sampleWarning, rule_versions };
         allLabels.push(...recs.map(r => r.label));
         allConfidences.push(...recs.map(r => r.predicted_confidence));
     }
@@ -232,7 +274,7 @@ function run() {
             const n = b.items.length;
             const meanPredicted = b.items.reduce((s, x) => s + x.confidence, 0) / n;
             const observedCorrect = b.items.filter(x => x.label === 1).length / n;
-            const calibrationDiff = meanPredicted - observedCorrect;
+            const calibrationDiff = observedCorrect - meanPredicted;
             const brierContribution = b.items.reduce((s, x) =>
                 s + Math.pow(x.confidence - x.label, 2), 0) / allLabels.length;
             return {
@@ -248,6 +290,7 @@ function run() {
         generated: new Date().toISOString(),
         disclaimer: 'Ova evaluacija meri preciznost prijavljenih nalaza. Ne meri recall, F1 niti greške koje alat nije pronašao.',
         correlation_warning: 'Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.',
+        future_note: 'Buduća evaluacija može koristiti bootstrap na nivou celog dokumenta.',
         total_samples: records.length,
         overall_brier: overallBrier,
         per_rule: ruleResults,
@@ -265,15 +308,17 @@ function run() {
     md.push('');
     md.push('> Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.');
     md.push('');
+    md.push('> Buduća evaluacija može koristiti bootstrap na nivou celog dokumenta.');
+    md.push('');
     md.push(`**Ukupno obeleženih uzoraka:** ${records.length}`);
     md.push(`**Ukupni Brier score:** ${overallBrier.toFixed(4)}`);
     md.push('');
     md.push('## Per-rule results');
     md.push('');
-    md.push('| Rule ID | TP | FP | N | Precision | Wilson CI | Width | Brier | Warning |');
-    md.push('|---------|----|----|---|-----------|-----------|-------|-------|---------|');
+    md.push('| Rule ID | TP | FP | N | Precision | Wilson CI | Width | Brier | Versions | Warning |');
+    md.push('|---------|----|----|---|-----------|-----------|-------|-------|----------|---------|');
     for (const [ruleId, r] of Object.entries(ruleResults)) {
-        md.push(`| ${ruleId} | ${r.tp} | ${r.fp} | ${r.n} | ${(r.precision * 100).toFixed(1)}% | [${r.wilson.lower.toFixed(3)}, ${r.wilson.upper.toFixed(3)}] | ${r.wilson.width.toFixed(3)} | ${r.brier.toFixed(4)} | ${r.sampleWarning || '-'} |`);
+        md.push(`| ${ruleId} | ${r.tp} | ${r.fp} | ${r.n} | ${(r.precision * 100).toFixed(1)}% | [${r.wilson.lower.toFixed(3)}, ${r.wilson.upper.toFixed(3)}] | ${r.wilson.width.toFixed(3)} | ${r.brier.toFixed(4)} | ${r.rule_versions.join(', ')} | ${r.sampleWarning || '-'} |`);
     }
     md.push('');
     md.push('## Reliability diagram');
@@ -291,11 +336,12 @@ function run() {
     // Console output
     console.log('\n=== Confidence Evaluation ===\n');
     console.log('Ova evaluacija meri preciznost prijavljenih nalaza. Ne meri recall, F1 niti greške koje alat nije pronašao.');
-    console.log('Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.\n');
+    console.log('Nalazi iz istog dokumenta nisu statistički nezavisni. Wilson intervali po pojedinačnim nalazima mogu potceniti stvarnu neizvesnost.');
+    console.log('Buduća evaluacija može koristiti bootstrap na nivou celog dokumenta.\n');
     console.log(`Total samples: ${records.length}`);
     console.log(`Overall Brier: ${overallBrier.toFixed(4)}\n`);
     for (const [ruleId, r] of Object.entries(ruleResults)) {
-        console.log(`  ${ruleId}: precision=${(r.precision * 100).toFixed(1)}% (${r.tp}/${r.n}) Wilson=[${r.wilson.lower.toFixed(3)},${r.wilson.upper.toFixed(3)}] Brier=${r.brier.toFixed(4)}${r.sampleWarning ? ` [${r.sampleWarning}]` : ''}`);
+        console.log(`  ${ruleId}: precision=${(r.precision * 100).toFixed(1)}% (${r.tp}/${r.n}) Wilson=[${r.wilson.lower.toFixed(3)},${r.wilson.upper.toFixed(3)}] Brier=${r.brier.toFixed(4)} versions=[${r.rule_versions.join(',')}]${r.sampleWarning ? ` [${r.sampleWarning}]` : ''}`);
     }
     console.log(`\nReports saved: ${jsonPath}, ${mdPath}`);
 }

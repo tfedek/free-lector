@@ -101,9 +101,13 @@ nezavisne nalaze."
 
 ## Zašto McNemar test nije implementiran
 
-McNemar test služi za poređenje dve verzije sistema na istom uzorku. Trenutno
-postoji samo jedna verzija pravila i nedovoljno podataka za smisleno poređenje.
-McNemar će biti dodat kada budu dostupna obeležena poređenja dve verzije.
+McNemar test služi za poređenje dve verzije sistema na istom uzorku. Trenutno:
+
+1. Identifikatori lokacija (location_key) nisu garantovano stabilni kroz verzije parsera/pravila
+2. Prvo je potreban zlatni standard — skup kandidatskih lokacija koji ostaje stabilan
+3. Tek nakon što postoji stabilno uparivanje, McNemar se može primeniti
+
+Dok ti uslovi ne budu ispunjeni, implementacija bi davala nepouzdane rezultate.
 
 ## Zašto compare-versions.js ne postoji
 

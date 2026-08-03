@@ -75,6 +75,7 @@ const RuleEngine = (() => {
                     original: parts.join('. '),
                     replacement: '[proveriti navedene delove dokumenta ručno]',
                     rationale: 'Dokument sadrži elemente koji nisu potpuno obrađeni. Rezultat audita može biti nepotpun.',
+                    ruleId: 'processing_coverage',
                 }));
             }
         }
@@ -138,19 +139,19 @@ const RuleEngine = (() => {
                         const dbl = /  +/g;
                         while ((m = dbl.exec(text)) !== null) {
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak u ćeliji.', autoFixable: true, ...cm }));
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak u ćeliji.', autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
                         const sbp = / +([,.:;!?])/g;
                         while ((m = sbp.exec(text)) !== null) {
                             if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
                         const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                         while ((m = nsa.exec(text)) !== null) {
                             if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\/)) continue;
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
                     }
 
@@ -169,7 +170,7 @@ const RuleEngine = (() => {
                                 const rationale = prematureClose
                                     ? `Prerano zatvorena zagrada ${close} pre otvaranja ${open} u ćeliji.`
                                     : `Neuparene zagrade u ćeliji (${cell.cellId}).`;
-                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale, ...cm }));
+                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale, ruleId: 'unbalanced_brackets_table_cell', ...cm }));
                             }
                         }
                     }
@@ -179,7 +180,7 @@ const RuleEngine = (() => {
                         for (const word of words) {
                             if (word.length < 2) continue;
                             if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
-                                findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ćeliji: \u201e${word}\u201c.`, ...cm }));
+                                findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ćeliji: \u201e${word}\u201c.`, ruleId: 'script_mixing_table_cell', ...cm }));
                             }
                         }
                     }
@@ -190,7 +191,7 @@ const RuleEngine = (() => {
                         const dupRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let dm;
                         while ((dm = dupRe.exec(text)) !== null) {
                             if (allowedDups.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
-                            findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč \u201e${dm[1]}\u201c u ćeliji.`, autoFixable: true, ...cm }));
+                            findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč \u201e${dm[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'duplicate_words_table_cell', ...cm }));
                         }
                     }
 
@@ -200,7 +201,7 @@ const RuleEngine = (() => {
                         while ((um = urlRe.exec(text)) !== null) {
                             const url = um[0];
                             let trailing = url.match(/[,.;]+$/);
-                            if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom u ćeliji.', ...cm })); }
+                            if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom u ćeliji.', ruleId: 'urls_table_cell', ...cm })); }
                         }
                     }
 
@@ -212,7 +213,7 @@ const RuleEngine = (() => {
                             const trNear = /[(\u201E\u201A""][^)"\u201C"]*[\u0400-\u04FFa-zA-Z\u00C0-\u024F]{5,}[^)"\u201C"]*[)"\u201C""]/;
                             if (trNear.test(after.substring(0,150))) continue;
                             const snip = gm[0].length > 40 ? gm[0].substring(0,40)+'...' : gm[0];
-                            findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u ćeliji.', requiresSourceVerification: true, ...cm }));
+                            findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u ćeliji.', requiresSourceVerification: true, ruleId: 'greek_table_cell', ...cm }));
                         }
                     }
 
@@ -224,7 +225,7 @@ const RuleEngine = (() => {
                             { re: /\[([^\]]+)\]\([^)]+\)/g, desc: '[link](url)' },
                             { re: /```/g, desc: '```' },
                         ];
-                        for (const pat of mdPatterns) { pat.re.lastIndex = 0; let mm; while ((mm = pat.re.exec(text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc} u ćeliji.`, ...cm })); } }
+                        for (const pat of mdPatterns) { pat.re.lastIndex = 0; let mm; while ((mm = pat.re.exec(text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc} u ćeliji.`, ruleId: 'markdown_table_cell', ...cm })); } }
                     }
 
                     // Apply direct quote protection PER CELL (not per table)
@@ -284,7 +285,7 @@ const RuleEngine = (() => {
                 const dbl = /  +/g; let m;
                 while ((m = dbl.exec(text)) !== null) {
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`, autoFixable: true, ruleId: 'spacing_header_footer' }));
                 }
             }
 
@@ -299,7 +300,7 @@ const RuleEngine = (() => {
                         const rationale = prematureClose
                             ? `Prerano zatvorena zagrada ${c} u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`
                             : `Neuparene zagrade u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`;
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale }));
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale, ruleId: 'unbalanced_brackets_header_footer' }));
                     }
                 }
             }
@@ -309,7 +310,7 @@ const RuleEngine = (() => {
                 for (const word of words) {
                     if (word.length < 2) continue;
                     if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
-                        findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.` }));
+                        findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`, ruleId: 'script_mixing_header_footer' }));
                     }
                 }
             }
@@ -318,7 +319,7 @@ const RuleEngine = (() => {
 
             if (options.quotes) {
                 const sc = (text.match(/"/g)||[]).length;
-                if (sc > 0) findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${sc} ravnih navodnika u ${loc}]`, replacement: '[zameniti tipografskim]', rationale: `${sc} ravnih navodnika u ${loc}.`, autoFixable: true }));
+                if (sc > 0) findings.push(makeFinding({ element: el, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${sc} ravnih navodnika u ${loc}]`, replacement: '[zameniti tipografskim]', rationale: `${sc} ravnih navodnika u ${loc}.`, autoFixable: true, ruleId: 'quotes_header_footer' }));
             }
 
             if (options.duplicates) {
@@ -326,27 +327,27 @@ const RuleEngine = (() => {
                 const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
                 while ((dm = dupeRe.exec(text)) !== null) {
                     if (allowed.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
-                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč u ${loc}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč u ${loc}.`, autoFixable: true, ruleId: 'duplicate_words_header_footer' }));
                 }
             }
 
             if (options.urls) {
                 const urlRe = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g; let um;
                 while ((um = urlRe.exec(text)) !== null) {
-                    if (um[0].match(/[,.;]+$/)) findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: um[0], replacement: um[0].replace(/[,.;]+$/,''), rationale: `URL u ${loc} završen interpunkcijom.` }));
+                    if (um[0].match(/[,.;]+$/)) findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: um[0], replacement: um[0].replace(/[,.;]+$/,''), rationale: `URL u ${loc} završen interpunkcijom.`, ruleId: 'urls_header_footer' }));
                 }
             }
 
             if (options.markdown && docMap.type !== 'markdown') {
                 const mdPats = [/(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, /\[([^\]]+)\]\([^)]+\)/g, /```/g];
-                for (const re of mdPats) { re.lastIndex=0; let mm; while ((mm=re.exec(text))!==null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Markdown u ${loc}.` })); } }
+                for (const re of mdPats) { re.lastIndex=0; let mm; while ((mm=re.exec(text))!==null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Markdown u ${loc}.`, ruleId: 'markdown_header_footer' })); } }
             }
 
             if (options.greek) {
                 const gRe = /[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s,;\u00B7.'"\u0300-\u036F]{2,}/g; let gm;
                 while ((gm = gRe.exec(text)) !== null) {
                     const snip = gm[0].length > 40 ? gm[0].substring(0,40)+'...' : gm[0];
-                    findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: `Grčki tekst u ${loc} bez prevoda.`, requiresSourceVerification: true }));
+                    findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: `Grčki tekst u ${loc} bez prevoda.`, requiresSourceVerification: true, ruleId: 'greek_header_footer' }));
                 }
             }
         }
@@ -375,12 +376,12 @@ const RuleEngine = (() => {
                 } else if (closeIdx !== -1) {
                     if (stack.length === 0) {
                         // Premature close - nothing to match
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.` }));
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
                     } else if (stack[stack.length-1].type !== closeIdx) {
                         // Mismatched: e.g. ( then ]
                         const top = stack.pop();
                         const expected = closeChars[top.type];
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(el.text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.` }));
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(el.text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.`, ruleId: 'unbalanced_brackets_body' }));
                     } else {
                         stack.pop(); // Correct match
                     }
@@ -389,14 +390,14 @@ const RuleEngine = (() => {
             // Remaining unclosed
             for (const item of stack) {
                 const expected = closeChars[item.type];
-                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.` }));
+                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.`, ruleId: 'unbalanced_brackets_body' }));
             }
             // ; where ) should be
             const sp = /\([^)]*;(?=[^(]*$)/g; let m;
             while ((m = sp.exec(el.text)) !== null) {
                 const frag = el.text.substring(m.index);
                 if (frag.indexOf(')') === -1 || frag.indexOf(';') < frag.indexOf(')')) {
-                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(el.text, m.index, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.' }));
+                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(el.text, m.index, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.', ruleId: 'unbalanced_brackets_body' }));
                 }
             }
         }
@@ -422,12 +423,12 @@ const RuleEngine = (() => {
         }
 
         if (totalStraight > 0) {
-            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${totalStraight} ravnih navodnika u dokumentu]`, replacement: '[zameniti tipografskim: \u201e...\u201c]', rationale: `Ukupno ${totalStraight} ravnih navodnika. Standard: \u201e...\u201c.`, autoFixable: true, globalPattern: true }));
+            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${totalStraight} ravnih navodnika u dokumentu]`, replacement: '[zameniti tipografskim: \u201e...\u201c]', rationale: `Ukupno ${totalStraight} ravnih navodnika. Standard: \u201e...\u201c.`, autoFixable: true, globalPattern: true, ruleId: 'quotes_body' }));
         }
 
         // Multi-paragraph balance check
         if (globalOpen !== globalClose) {
-            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.88, original: `[${globalOpen}\u00D7 \u201e vs ${globalClose}\u00D7 \u201c u celom dokumentu]`, replacement: '[upariti navodnike]', rationale: 'Neupareni tipografski navodnici kroz ceo dokument (moguć višepasusni citat).' }));
+            findings.push(makeFinding({ element: { id: 'doc-global', type: 'document', text: '', section: '(ceo dokument)', isDirectQuote: false }, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.88, original: `[${globalOpen}\u00D7 \u201e vs ${globalClose}\u00D7 \u201c u celom dokumentu]`, replacement: '[upariti navodnike]', rationale: 'Neupareni tipografski navodnici kroz ceo dokument (moguć višepasusni citat).', ruleId: 'unmatched_quotes_body' }));
         }
 
         return { findings, scannedCount, skippedCount };
@@ -455,7 +456,7 @@ const RuleEngine = (() => {
             if (!el.text) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
-            for (const pat of patterns) { pat.re.lastIndex = 0; let m; while ((m = pat.re.exec(el.text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: m[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc}.` })); } }
+            for (const pat of patterns) { pat.re.lastIndex = 0; let m; while ((m = pat.re.exec(el.text)) !== null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: m[0].trim(), replacement: '[ukloniti markdown]', rationale: `Ostatak ${pat.desc}.`, ruleId: 'markdown_body' })); } }
         }
         return { findings, scannedCount, skippedCount };
     }
@@ -472,15 +473,15 @@ const RuleEngine = (() => {
             scannedCount++;
             const text = el.text; let m;
             const dbl = /  +/g;
-            while ((m = dbl.exec(text)) !== null) { const ctx = getContext(text, m.index, 25); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak.', autoFixable: true })); }
+            while ((m = dbl.exec(text)) !== null) { const ctx = getContext(text, m.index, 25); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak.', autoFixable: true, ruleId: 'spacing_body' })); }
             const sbp = / +([,.:;!?])/g;
-            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/) || b.match(/\d$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;  const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true })); }
+            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/) || b.match(/\d$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;  const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
             const sbc = / +([)\]}>»\u201C])/g;
-            while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true })); }
+            while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const sao = /([(\[{<«\u201E]) +/g;
-            while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true })); }
+            while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
-            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true })); }
+            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
         }
         return { findings, scannedCount, skippedCount };
     }
@@ -500,7 +501,7 @@ const RuleEngine = (() => {
                 if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
                     const cc = (word.match(/[\u0400-\u04FF]/g)||[]).length;
                     const lc = (word.match(/[a-zA-Z\u00C0-\u024F]/g)||[]).length;
-                    findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: `[prebaciti na ${cc>lc?'ćirilica':'latinica'}]`, rationale: `Reč \u201e${word}\u201c: ${cc} ćir. + ${lc} lat.` }));
+                    findings.push(makeFinding({ element: el, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: `[prebaciti na ${cc>lc?'ćirilica':'latinica'}]`, rationale: `Reč \u201e${word}\u201c: ${cc} ćir. + ${lc} lat.`, ruleId: 'script_mixing_body' }));
                 }
             }
         }
@@ -526,7 +527,7 @@ const RuleEngine = (() => {
                 if (before.match(/[(\u201E\u201A].*[\u0400-\u04FFa-zA-Z]{5,}.*[)\u201C"]/)) continue;
                 if (before.match(/\(\s*$/) && after.match(/^\s*\)/)) continue;
                 const snip = m[0].length > 40 ? m[0].substring(0,40)+'...' : m[0];
-                findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u blizini.', requiresSourceVerification: true }));
+                findings.push(makeFinding({ element: el, category: 'Grčki bez prevoda', priority: 'PROVERITI', confidence: 0.75, original: snip, replacement: '[dodati prevod]', rationale: 'Grčki bez prevoda u blizini.', requiresSourceVerification: true, ruleId: 'greek_body' }));
             }
         }
         return { findings, scannedCount, skippedCount };
@@ -548,7 +549,7 @@ const RuleEngine = (() => {
                 const re = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let m;
                 while ((m = re.exec(line)) !== null) {
                     if (allowed.has(m[1].toLowerCase()) || m[1].length < 2) continue;
-                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: m[0], replacement: m[1], rationale: `Ponovljena reč \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'duplicate_words_body' }));
                 }
             }
         }
@@ -570,8 +571,8 @@ const RuleEngine = (() => {
             const norm = te.text.replace(/\s+/g,' ').toLowerCase();
             if (headings.find(h => h.text.replace(/\s+/g,' ').toLowerCase() === norm)) continue;
             const close = headings.find(h => levenshteinDistance(h.text.toLowerCase(), norm) <= 3);
-            if (close) { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'OBAVEZNO', confidence: 0.88, original: `TOC: \u201e${te.text}\u201c`, replacement: `Uskladiti: \u201e${close.text}\u201c`, rationale: 'Razlika TOC i naslova.' })); }
-            else { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `TOC: \u201e${te.text}\u201c`, replacement: '[proveriti]', rationale: 'TOC stavka bez odgovarajućeg naslova.' })); }
+            if (close) { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'OBAVEZNO', confidence: 0.88, original: `TOC: \u201e${te.text}\u201c`, replacement: `Uskladiti: \u201e${close.text}\u201c`, rationale: 'Razlika TOC i naslova.', ruleId: 'toc_mismatch' })); }
+            else { findings.push(makeFinding({ element: te.element, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `TOC: \u201e${te.text}\u201c`, replacement: '[proveriti]', rationale: 'TOC stavka bez odgovarajućeg naslova.', ruleId: 'toc_mismatch' })); }
         }
 
         // Reverse check: headings not in TOC (only if TOC exists)
@@ -581,7 +582,7 @@ const RuleEngine = (() => {
                 const inToc = tocEntries.some(te => te.text.replace(/\s+/g,' ').toLowerCase() === normH || levenshteinDistance(te.text.toLowerCase(), normH) <= 3);
                 if (!inToc) {
                     const hEl = docMap.elements.find(e => e.id === h.id) || { id: h.id, type: 'heading', text: h.text, section: h.text, isDirectQuote: false };
-                    findings.push(makeFinding({ element: hEl, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `Naslov: \u201e${h.text}\u201c`, replacement: '[dodati u sadržaj]', rationale: 'Naslov postoji u dokumentu ali nije u sadržaju.' }));
+                    findings.push(makeFinding({ element: hEl, category: 'TOC/naslovi', priority: 'PROVERITI', confidence: 0.70, original: `Naslov: \u201e${h.text}\u201c`, replacement: '[dodati u sadržaj]', rationale: 'Naslov postoji u dokumentu ali nije u sadržaju.', ruleId: 'toc_mismatch' }));
                 }
             }
         }
@@ -618,7 +619,7 @@ const RuleEngine = (() => {
                         // Use stored lvlTextPattern for proper expected label
                         const lvlText = curr.lvlTextPattern || '%1.';
                         const expLabel = lvlText.replace(/%\d/, String(expected));
-                        findings.push(makeFinding({ element: curr, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.92, original: `Stavka ${curr.displayedLabel||curr.displayedNumber} (prethodno: ${prev.displayedLabel||prev.displayedNumber})`, replacement: `Očekivano: ${expLabel}`, rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.` }));
+                        findings.push(makeFinding({ element: curr, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.92, original: `Stavka ${curr.displayedLabel||curr.displayedNumber} (prethodno: ${prev.displayedLabel||prev.displayedNumber})`, replacement: `Očekivano: ${expLabel}`, rationale: `Numeracija preskače sa ${prev.displayedNumber} na ${curr.displayedNumber}.`, ruleId: 'numbering_skip' }));
                     }
                 }
             }
@@ -648,7 +649,7 @@ const RuleEngine = (() => {
                 if (curr.num === 1) continue;
                 const expected = prev.num + 1;
                 if (curr.num !== expected) {
-                    findings.push(makeFinding({ element: curr.element, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.85, original: `Stavka ${curr.num} (prethodno: ${prev.num})`, replacement: `Očekivano: ${expected}`, rationale: `Numeracija preskače sa ${prev.num} na ${curr.num}.` }));
+                    findings.push(makeFinding({ element: curr.element, category: 'Numeracija', priority: 'OBAVEZNO', confidence: 0.85, original: `Stavka ${curr.num} (prethodno: ${prev.num})`, replacement: `Očekivano: ${expected}`, rationale: `Numeracija preskače sa ${prev.num} na ${curr.num}.`, ruleId: 'numbering_skip' }));
                 }
             }
         }
@@ -710,12 +711,12 @@ const RuleEngine = (() => {
 
             if (!isAncient && !isElectronic && !isReligious) {
                 if (!text.match(/\b(1[5-9]\d{2}|20\d{2})\b/)) {
-                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true }));
+                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.75, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[dodati godinu]', rationale: 'Bez godine izdanja.', requiresSourceVerification: true, ruleId: 'bibliography_missing_year' }));
                 }
                 if (!text.match(/:\s*[A-Z\u0400-\u04FF]/) && !text.match(/University|Press|Verlag|izdava/i) &&
                     // Skip journal articles (have quoted title, journal name, or vol/issue indicators)
                     !text.match(/[„"\u201E\u201C\u00AB\u00BB]/) && !text.match(/\b(Journal|Review|Bulletin|Proceedings|Annals|Quarterly|Vol\.|Issue|pp\.|str\.)\b/i)) {
-                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true }));
+                    findings.push(makeFinding({ element: entry, category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.60, original: text.substring(0,60)+(text.length>60?'...':''), replacement: '[proveriti izdavača]', rationale: 'Moguć nedostatak izdavača.', requiresSourceVerification: true, ruleId: 'bibliography_missing_publisher' }));
                 }
             }
         }
@@ -744,7 +745,7 @@ const RuleEngine = (() => {
         }
         for (const author of cited) {
             if (!allBibEntries.some(e => e.text.includes(author))) {
-                findings.push(makeFinding({ element: docMap.elements[firstBibIdx], category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true }));
+                findings.push(makeFinding({ element: docMap.elements[firstBibIdx], category: 'Bibliografija', priority: 'PROVERITI', confidence: 0.70, original: `Citiran: \u201e${author}\u201c`, replacement: '[dodati u bibliografiju]', rationale: `\u201e${author}\u201c citiran ali nije u bibliografiji.`, requiresSourceVerification: true, ruleId: 'bibliography_cross_reference' }));
             }
         }
         } // end for (const bibIdx of bibIndices)
@@ -766,9 +767,9 @@ const RuleEngine = (() => {
                 const url = m[0];
                 const openP = (url.match(/\(/g)||[]).length, closeP = (url.match(/\)/g)||[]).length;
                 let trailing = url.match(/[,.;]+$/);
-                if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom.' })); }
-                else if (url.match(/\)$/) && closeP > openP) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.70, original: url, replacement: url.replace(/\)$/, ''), rationale: 'Zatvorena zagrada verovatno nije deo URL-a.' })); }
-                if (url.length > 100) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PREPORUKA', confidence: 0.65, original: url.substring(0,50)+'...', replacement: '[proveriti]', rationale: 'Veoma dugačak URL.' })); }
+                if (trailing) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: 'URL završen interpunkcijom.', ruleId: 'urls_body' })); }
+                else if (url.match(/\)$/) && closeP > openP) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PROVERITI', confidence: 0.70, original: url, replacement: url.replace(/\)$/, ''), rationale: 'Zatvorena zagrada verovatno nije deo URL-a.', ruleId: 'urls_body' })); }
+                if (url.length > 100) { findings.push(makeFinding({ element: el, category: 'URL', priority: 'PREPORUKA', confidence: 0.65, original: url.substring(0,50)+'...', replacement: '[proveriti]', rationale: 'Veoma dugačak URL.', ruleId: 'urls_body' })); }
             }
         }
         return { findings, scannedCount, skippedCount };
@@ -789,7 +790,7 @@ const RuleEngine = (() => {
 
             // Empty note detection - gated by emptyNotes option
             if (options.emptyNotes && note.isEmpty) {
-                findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} - prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.` }));
+                findings.push(makeFinding({ element: noteEl, category: 'Fusnote', priority: 'OBAVEZNO', confidence: 0.99, original: `[${noteType} ${note.id} - prazna]`, replacement: '[dodati sadržaj]', rationale: `Prazna ${noteType.toLowerCase()}.`, ruleId: 'empty_note' }));
                 continue;
             }
 
@@ -810,25 +811,25 @@ const RuleEngine = (() => {
                 const dbl = /  +/g;
                 while ((m = dbl.exec(text)) !== null) {
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: `Višestruki razmak u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
                 const sbp = / +([,.:;!?])/g;
                 while ((m = sbp.exec(text)) !== null) {
                     const b = text.substring(Math.max(0,m.index-5),m.index);
                     if (b.match(/https?:$/) || b.match(/\d$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue; 
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
                 const sbc = / +([)\]}>»\u201C])/g;
                 while ((m = sbc.exec(text)) !== null) {
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: `Razmak pre zatvorene zagrade u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}>»\u201C])/, '$1'), rationale: `Razmak pre zatvorene zagrade u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
                 const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                 while ((m = nsa.exec(text)) !== null) {
                     if (text.substring(Math.max(0,m.index-10),m.index+10).match(/https?:|:\\/)) continue;
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
             }
 
@@ -843,7 +844,7 @@ const RuleEngine = (() => {
                         const rationale = prematureClose
                             ? `Prerano zatvorena zagrada ${c} u ${noteType.toLowerCase()} ${note.id}.`
                             : `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.`;
-                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale }));
+                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale, ruleId: 'unbalanced_brackets_note' }));
                     }
                 }
             }
@@ -853,7 +854,7 @@ const RuleEngine = (() => {
                 for (const word of words) {
                     if (word.length < 2) continue;
                     if (/[\u0400-\u04FF]/.test(word) && /[a-zA-Z\u00C0-\u024F]/.test(word)) {
-                        findings.push(makeFinding({ element: noteEl, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${noteType.toLowerCase()}: \u201e${word}\u201c.` }));
+                        findings.push(makeFinding({ element: noteEl, category: 'Mešanje pisama', priority: 'OBAVEZNO', confidence: 0.96, original: word, replacement: '[prebaciti na jedno pismo]', rationale: `Pomešana slova u ${noteType.toLowerCase()}: \u201e${word}\u201c.`, ruleId: 'script_mixing_note' }));
                     }
                 }
             }
@@ -861,7 +862,7 @@ const RuleEngine = (() => {
             if (options.quotes) {
                 const straightCount = (text.match(/"/g) || []).length;
                 if (straightCount > 0) {
-                    findings.push(makeFinding({ element: noteEl, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${straightCount} ravnih navodnika u ${noteType.toLowerCase()}]`, replacement: '[zameniti tipografskim]', rationale: `${straightCount} ravnih navodnika u ${noteType.toLowerCase()} ${note.id}.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Tipografija', priority: 'OBAVEZNO', confidence: 0.95, original: `[${straightCount} ravnih navodnika u ${noteType.toLowerCase()}]`, replacement: '[zameniti tipografskim]', rationale: `${straightCount} ravnih navodnika u ${noteType.toLowerCase()} ${note.id}.`, autoFixable: true, ruleId: 'quotes_note' }));
                 }
             }
 
@@ -871,7 +872,7 @@ const RuleEngine = (() => {
                 let md;
                 while ((md = dupeRe.exec(text)) !== null) {
                     if (allowedDupes.has(md[1].toLowerCase()) || md[1].length < 2) continue;
-                    findings.push(makeFinding({ element: noteEl, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: md[0], replacement: md[1], rationale: `Ponovljena reč u ${noteType.toLowerCase()}: \u201e${md[1]}\u201c.`, autoFixable: true }));
+                    findings.push(makeFinding({ element: noteEl, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: md[0], replacement: md[1], rationale: `Ponovljena reč u ${noteType.toLowerCase()}: \u201e${md[1]}\u201c.`, autoFixable: true, ruleId: 'duplicate_words_note' }));
                 }
             }
 
@@ -881,7 +882,7 @@ const RuleEngine = (() => {
                 while ((mu = urlRe.exec(text)) !== null) {
                     const url = mu[0];
                     if (url.match(/[,.;]+$/)) {
-                        findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.` }));
+                        findings.push(makeFinding({ element: noteEl, category: 'URL', priority: 'PROVERITI', confidence: 0.80, original: url, replacement: url.replace(/[,.;]+$/, ''), rationale: `URL u ${noteType.toLowerCase()} završen interpunkcijom.`, ruleId: 'urls_note' }));
                     }
                 }
             }
@@ -909,7 +910,7 @@ const RuleEngine = (() => {
             if (!el.text || el.text.trim().length < 50 || el.type === 'heading' || el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
             const norm = el.text.trim().replace(/\s+/g,' ').toLowerCase();
-            if (seen.has(norm)) { findings.push(makeFinding({ element: el, category: 'Ponavljanje', priority: 'OBAVEZNO', confidence: 0.98, original: el.text.substring(0,80)+'...', replacement: '[ukloniti]', rationale: `Ponovljen pasus (${seen.get(norm).id}).` })); }
+            if (seen.has(norm)) { findings.push(makeFinding({ element: el, category: 'Ponavljanje', priority: 'OBAVEZNO', confidence: 0.98, original: el.text.substring(0,80)+'...', replacement: '[ukloniti]', rationale: `Ponovljen pasus (${seen.get(norm).id}).`, ruleId: 'repeated_paragraph' })); }
             else seen.set(norm, el);
         }
         return { findings, scannedCount, skippedCount };
@@ -968,7 +969,7 @@ const RuleEngine = (() => {
                     if (/^[IVXLCDM]+$/.test(word)) continue;
                     if (headingWords.has(word)) continue;
                     if (tableCapsWords.has(word)) continue;
-                    findings.push(makeFinding({ element: el, category: 'ALL-CAPS', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.` }));
+                    findings.push(makeFinding({ element: el, category: 'ALL-CAPS', priority: 'PREPORUKA', confidence: 0.70, original: word, replacement: '[normalizovati ako nije skraćenica]', rationale: `\u201e${word}\u201c ALL-CAPS u telu teksta.`, ruleId: 'all_caps_body' }));
                 }
             }
         }
@@ -985,7 +986,7 @@ const RuleEngine = (() => {
             if (el.type !== 'heading') { skippedCount++; continue; }
             scannedCount++;
             if (!el.text || !el.text.trim()) {
-                findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'OBAVEZNO', confidence: 0.99, original: `[Prazan naslov nivoa ${el.headingLevel}]`, replacement: '[dodati tekst]', rationale: 'Naslov bez sadržaja.' }));
+                findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'OBAVEZNO', confidence: 0.99, original: `[Prazan naslov nivoa ${el.headingLevel}]`, replacement: '[dodati tekst]', rationale: 'Naslov bez sadržaja.', ruleId: 'empty_heading' }));
             }
             // Check heading followed by another heading - only report if same or HIGHER level (not normal nesting)
             if (i < docMap.elements.length - 1) {
@@ -995,7 +996,7 @@ const RuleEngine = (() => {
                     const nextLvl = next.headingLevel || 1;
                     // H1→H2 is fine (nesting). H2→H1 or H2→H2 without content is suspect.
                     if (nextLvl <= currLvl) {
-                        findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'PREPORUKA', confidence: 0.75, original: el.text || '[prazan]', replacement: '[dodati sadržaj ispod]', rationale: 'Naslov bez sadržaja pre naslova istog/višeg nivoa.' }));
+                        findings.push(makeFinding({ element: el, category: 'Struktura', priority: 'PREPORUKA', confidence: 0.75, original: el.text || '[prazan]', replacement: '[dodati sadržaj ispod]', rationale: 'Naslov bez sadržaja pre naslova istog/višeg nivoa.', ruleId: 'empty_heading' }));
                     }
                 }
             }
@@ -1012,13 +1013,15 @@ const RuleEngine = (() => {
     function makeFinding({ element, category, priority, confidence, original,
         replacement, rationale, autoFixable = false, globalPattern = false,
         requiresSourceVerification = false,
-        tableId = null, rowId = null, cellId = null, rowIndex = null, columnIndex = null }) {
+        tableId = null, rowId = null, cellId = null, rowIndex = null, columnIndex = null,
+        ruleId }) {
         return {
             id: nextId(), section: getSectionName(element), paragraphId: element.id || null,
             category, priority, confidence, original, replacement, rationale,
             isDirectQuote: element.isDirectQuote || false,
             requiresSourceVerification, autoFixable, globalPattern, status: 'OPEN',
             tableId, rowId, cellId, rowIndex, columnIndex,
+            rule_id: ruleId || 'unknown',
             _element: element,
         };
     }

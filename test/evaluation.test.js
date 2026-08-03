@@ -7,6 +7,9 @@
 
 const assert = require('assert');
 const path = require('path');
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 
 const { calculateSampleSize } = require(path.resolve(__dirname, '..', 'evaluation', 'sample-size.js'));
 const { parseCSV, wilsonCI } = require(path.resolve(__dirname, '..', 'evaluation', 'evaluate-confidence.js'));
@@ -27,21 +30,19 @@ console.log('Sample size calculations:');
 
 test('p=0.5, margin=0.05, 95% -> ~385', () => {
     const result = calculateSampleSize({ p: 0.5, margin: 0.05, z: 1.96, findingsPerDocument: 1, designEffect: 1 });
-    // ceil(1.96^2 * 0.5 * 0.5 / 0.05^2) = ceil(384.16) = 385
     assert.strictEqual(result.requiredFindings, 385, `Expected 385, got ${result.requiredFindings}`);
 });
 
 test('p=0.5, margin=0.10, 95% -> ~97', () => {
     const result = calculateSampleSize({ p: 0.5, margin: 0.10, z: 1.96, findingsPerDocument: 1, designEffect: 1 });
-    // ceil(1.96^2 * 0.5 * 0.5 / 0.10^2) = ceil(96.04) = 97
     assert.strictEqual(result.requiredFindings, 97, `Expected 97, got ${result.requiredFindings}`);
 });
 
 test('design effect multiplies required findings', () => {
     const result = calculateSampleSize({ p: 0.5, margin: 0.05, z: 1.96, findingsPerDocument: 5, designEffect: 2 });
     assert.strictEqual(result.requiredFindings, 385);
-    assert.strictEqual(result.adjustedFindings, 770); // 385 * 2
-    assert.strictEqual(result.estimatedDocuments, 154); // ceil(770 / 5)
+    assert.strictEqual(result.adjustedFindings, 770);
+    assert.strictEqual(result.estimatedDocuments, 154);
 });
 
 test('input validation: p=0 throws', () => {
@@ -86,7 +87,6 @@ console.log('\nWilson CI:');
 
 test('Wilson CI for small sample (N=5, TP=4)', () => {
     const ci = wilsonCI(4, 5);
-    // Precision = 4/5 = 0.8
     assert(ci.lower > 0.2, `Lower bound too low: ${ci.lower}`);
     assert(ci.upper <= 1.0, `Upper bound too high: ${ci.upper}`);
     assert(ci.lower < 0.8, 'Lower bound should be below point estimate');
@@ -108,19 +108,14 @@ test('Wilson CI for N=0 returns zeros', () => {
 console.log('\nBrier score:');
 
 test('Brier score calculation', () => {
-    // Perfect predictions: confidence=1 for TP, confidence=0 for FP
-    // Brier = mean((pred - label)^2)
-    // (1-1)^2 + (0-0)^2 = 0
     const perfect = [{ confidence: 1, label: 1 }, { confidence: 0, label: 0 }];
     const brierPerfect = perfect.reduce((s, x) => s + Math.pow(x.confidence - x.label, 2), 0) / perfect.length;
     assert.strictEqual(brierPerfect, 0, 'Perfect predictions should have Brier=0');
 
-    // Worst predictions: confidence=0 for TP, confidence=1 for FP
     const worst = [{ confidence: 0, label: 1 }, { confidence: 1, label: 0 }];
     const brierWorst = worst.reduce((s, x) => s + Math.pow(x.confidence - x.label, 2), 0) / worst.length;
     assert.strictEqual(brierWorst, 1, 'Worst predictions should have Brier=1');
 
-    // Mixed: confidence=0.7 for label=1
     const mixed = [{ confidence: 0.7, label: 1 }];
     const brierMixed = mixed.reduce((s, x) => s + Math.pow(x.confidence - x.label, 2), 0) / mixed.length;
     assert(Math.abs(brierMixed - 0.09) < 0.001, `Expected ~0.09, got ${brierMixed}`);
@@ -184,29 +179,108 @@ test('quoted field with embedded quotes', () => {
 });
 
 // ==========================================
-// MALFORMED INPUT TESTS
+// CLI TESTS - evaluate-confidence.js
 // ==========================================
-console.log('\nMalformed input:');
+console.log('\nCLI tests (evaluate-confidence.js):');
 
-test('malformed label gives error with row number (captured)', () => {
-    // We test the validation logic directly
+const evalScript = path.resolve(__dirname, '..', 'evaluation', 'evaluate-confidence.js');
+const sampleScript = path.resolve(__dirname, '..', 'evaluation', 'sample-size.js');
+
+function writeTempCSV(content) {
+    const tmpFile = path.join(os.tmpdir(), `fl-test-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
+    fs.writeFileSync(tmpFile, content);
+    return tmpFile;
+}
+
+test('malformed label exits with code 1 and shows row number', () => {
     const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,rule-1,f-1,p-1,0.5,INVALID,r1,rev-1,\n';
-    const { header, rows } = parseCSV(csv);
-    const colIdx = {};
-    header.forEach((col, i) => { colIdx[col] = i; });
-    const label = rows[0].fields[colIdx['label']];
-    // Validate label is 0 or 1
-    assert(label !== '0' && label !== '1', 'Label INVALID should fail validation');
-    assert.strictEqual(rows[0].lineNumber, 2, 'Should report row number 2');
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+        assert(result.stderr.includes('red 2'), `stderr should mention row number: ${result.stderr}`);
+    } finally { fs.unlinkSync(tmpFile); }
 });
 
-test('missing required column detected', () => {
-    const csv = 'finding_id,label\nf-1,1\n';
-    const { header } = parseCSV(csv);
-    const requiredCols = ['rule_id', 'rule_version', 'version_id', 'label', 'predicted_confidence', 'finding_id'];
-    const missing = requiredCols.filter(col => !header.includes(col));
-    assert(missing.length > 0, 'Should detect missing columns');
-    assert(missing.includes('rule_id'), 'Should detect missing rule_id');
+test('0.9abc confidence rejected', () => {
+    const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,rule-1,f-1,p-1,0.9abc,1,r1,rev-1,\n';
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+        assert(result.stderr.includes('0.9abc'), `stderr should mention the bad value: ${result.stderr}`);
+    } finally { fs.unlinkSync(tmpFile); }
+});
+
+test('unclosed quotes rejected', () => {
+    const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,rule-1,f-1,p-1,0.9,1,r1,rev-1,"unclosed\n';
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+        assert(result.stderr.includes('nezatvorene'), `stderr should mention unclosed quotes: ${result.stderr}`);
+    } finally { fs.unlinkSync(tmpFile); }
+});
+
+test('wrong column count rejected', () => {
+    const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,rule-1,f-1,p-1,0.9,1,r1\n';
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+        assert(result.stderr.includes('kolona'), `stderr should mention column count: ${result.stderr}`);
+    } finally { fs.unlinkSync(tmpFile); }
+});
+
+test('empty required field rejected', () => {
+    const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,,f-1,p-1,0.9,1,r1,rev-1,\n';
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+        assert(result.stderr.includes('prazna') || result.stderr.includes('prazan'), `stderr should mention empty field: ${result.stderr}`);
+    } finally { fs.unlinkSync(tmpFile); }
+});
+
+test('valid CSV generates report', () => {
+    const csv = 'document_id,version_id,rule_id,finding_id,location_key,predicted_confidence,label,rule_version,reviewer,note\ndoc-1,v-1,spacing_body,f-1,p-1,0.95,1,r1,rev-1,ok\n';
+    const tmpFile = writeTempCSV(csv);
+    try {
+        const result = spawnSync('node', [evalScript, tmpFile], { encoding: 'utf-8' });
+        assert.strictEqual(result.status, 0, `Expected exit code 0, got ${result.status}. stderr: ${result.stderr}`);
+        // Check report was generated
+        const reportDir = path.resolve(__dirname, '..', 'evaluation', 'report');
+        assert(fs.existsSync(path.join(reportDir, 'confidence-report.json')), 'JSON report should exist');
+        assert(fs.existsSync(path.join(reportDir, 'confidence-report.md')), 'MD report should exist');
+    } finally { fs.unlinkSync(tmpFile); }
+});
+
+// ==========================================
+// CLI TESTS - sample-size.js
+// ==========================================
+console.log('\nCLI tests (sample-size.js):');
+
+test('simultaneous --confidence and --z rejected', () => {
+    const result = spawnSync('node', [sampleScript, '--confidence', '0.95', '--z', '1.96'], { encoding: 'utf-8' });
+    assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+    assert(result.stderr.includes('istovremeno'), `stderr should mention simultaneous use: ${result.stderr}`);
+});
+
+test('argument without value rejected', () => {
+    const result = spawnSync('node', [sampleScript, '--p'], { encoding: 'utf-8' });
+    assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+    assert(result.stderr.includes('vrednost'), `stderr should mention missing value: ${result.stderr}`);
+});
+
+test('NaN input rejected (--p abc)', () => {
+    const result = spawnSync('node', [sampleScript, '--p', 'abc'], { encoding: 'utf-8' });
+    assert.strictEqual(result.status, 1, `Expected exit code 1, got ${result.status}`);
+});
+
+test('valid sample-size invocation succeeds', () => {
+    const result = spawnSync('node', [sampleScript, '--p', '0.5', '--margin', '0.05'], { encoding: 'utf-8' });
+    assert.strictEqual(result.status, 0, `Expected exit code 0, got ${result.status}. stderr: ${result.stderr}`);
+    assert(result.stdout.includes('385'), `Output should contain 385: ${result.stdout}`);
 });
 
 // ==========================================
@@ -215,15 +289,15 @@ test('missing required column detected', () => {
 console.log('\nReport content:');
 
 test('report does NOT contain recall or F1', () => {
-    // The evaluate-confidence.js should never output recall or F1
-    const fs = require('fs');
     const content = fs.readFileSync(path.resolve(__dirname, '..', 'evaluation', 'evaluate-confidence.js'), 'utf-8');
-    // Check that the script's output strings don't contain recall/F1
-    // (The disclaimer explicitly says "Ne meri recall, F1")
     assert(content.includes('Ne meri recall, F1'), 'Should include disclaimer about not measuring recall/F1');
-    // Check it doesn't compute recall or F1
     assert(!content.includes('overallRecall'), 'Should not compute overallRecall');
     assert(!content.includes('overallF1'), 'Should not compute overallF1');
+});
+
+test('report includes bootstrap note', () => {
+    const content = fs.readFileSync(path.resolve(__dirname, '..', 'evaluation', 'evaluate-confidence.js'), 'utf-8');
+    assert(content.includes('bootstrap na nivou celog dokumenta'), 'Should include bootstrap future note');
 });
 
 // ==========================================

@@ -56,7 +56,7 @@
         const preset = name === 'full' ? FULL_PRESET : BASIC_PRESET;
         document.querySelectorAll('[data-check]').forEach(cb => {
             const key = cb.dataset.check;
-            if (key in preset) { cb.checked = preset[key]; cb.disabled = (name === 'basic' && !preset[key]); }
+            if (key in preset) { cb.checked = preset[key]; }
         });
         const radio = document.querySelector(`input[name="audit-mode"][value="${name === 'full' ? 'FULL_AUDIT' : 'PROOFREADING'}"]`);
         if (radio) radio.checked = true;
@@ -73,7 +73,16 @@
     });
 
     document.querySelectorAll('[data-check]').forEach(cb => {
-        cb.addEventListener('change', () => { if (!applyingPreset) activePreset = 'custom'; });
+        cb.addEventListener('change', () => {
+            if (!applyingPreset) {
+                activePreset = 'custom';
+                // Uncheck both preset radios to indicate custom mode
+                modeRadios.forEach(r => r.checked = false);
+                // Show 'Prilagođeno' label if available
+                const customLabel = document.getElementById('custom-preset-label');
+                if (customLabel) customLabel.classList.remove('hidden');
+            }
+        });
     });
 
     applyPreset('basic');
