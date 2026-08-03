@@ -60,6 +60,9 @@
         });
         const radio = document.querySelector(`input[name="audit-mode"][value="${name === 'full' ? 'FULL_AUDIT' : 'PROOFREADING'}"]`);
         if (radio) radio.checked = true;
+        // Hide custom label when a preset is applied
+        const customLabel = document.getElementById('custom-preset-label');
+        if (customLabel) customLabel.classList.add('hidden');
         activePreset = name;
         applyingPreset = false;
     }
@@ -123,7 +126,7 @@
 
         const options = {};
         document.querySelectorAll('[data-check]').forEach(cb => { options[cb.dataset.check] = cb.checked; });
-        options.auditMode = document.querySelector('input[name="audit-mode"]:checked').value;
+        options.auditMode = document.querySelector('input[name="audit-mode"]:checked')?.value ?? 'CUSTOM';
         options.preset = activePreset;
 
         document.getElementById('upload-section').classList.add('hidden');

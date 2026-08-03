@@ -47,16 +47,19 @@ function parseCSV(text) {
 
     if (lines.length === 0) return { header: [], rows: [] };
 
-    const header = splitCSVLine(lines[0]);
+    const header = splitCSVLine(lines[0], 1);
+    if (!header) { process.exit(1); return { header: [], rows: [] }; }
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
         if (lines[i].trim().length === 0) continue;
-        rows.push({ lineNumber: i + 1, fields: splitCSVLine(lines[i]) });
+        const fields = splitCSVLine(lines[i], i + 1);
+        if (!fields) { process.exit(1); return { header, rows }; }
+        rows.push({ lineNumber: i + 1, fields });
     }
     return { header, rows };
 }
 
-function splitCSVLine(line) {
+function splitCSVLine(line, rowNum) {
     const fields = [];
     let current = '';
     let inQuotes = false;
@@ -75,6 +78,10 @@ function splitCSVLine(line) {
         } else {
             current += ch;
         }
+    }
+    if (inQuotes) {
+        console.error(`Greška red ${rowNum}: nezatvoreni navodnici.`);
+        return null;
     }
     fields.push(current);
     return fields;
@@ -125,7 +132,7 @@ function run() {
     }
 
     // Validate required columns
-    const requiredCols = ['rule_id', 'rule_version', 'version_id', 'label', 'predicted_confidence', 'finding_id'];
+    const requiredCols = ['document_id', 'version_id', 'rule_id', 'finding_id', 'location_key', 'predicted_confidence', 'label', 'rule_version', 'reviewer', 'note'];
     for (const col of requiredCols) {
         if (!header.includes(col)) {
             console.error(`Greška: nedostaje obavezna kolona "${col}" u zaglavlju CSV-a.`);
