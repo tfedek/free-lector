@@ -934,7 +934,7 @@ const RuleEngine = (() => {
     // ==========================================
     function checkAllCaps(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI','NSP']);
+        const known = new Set(['UNESCO','NATO','EU','SAD','SSSR','DNA','RNA','URL','HTML','CSS','JS','PDF','DOCX','ISBN','ISSN','DOI','NB','PS','AD','BC','PhD','USA','UK','ID','OK','IT','PR','HR','TV','CD','DVD','USB','PC','OS','AI','NSP','JSON','XML','OOXML','CSV','NLP','ODT','OCR','API','SQL','SSH','HTTP','HTTPS','FTP','SMTP','TCP','UDP','DNS','SSL','TLS','JWT','JWT','YAML','TOML','GNU','GPL','MIT','BSD','GDPR','WCAG','WAI','ARIA','RFC','ISO','IEEE','ACM']);
 
         // Collect words from headings - these are likely intentional title words
         const headingWords = new Set();
