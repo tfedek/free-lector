@@ -63,6 +63,18 @@ const RuleEngine = (() => {
         // Report unsupported elements as warning
         if (docMap.processingCoverage) {
             const pc = docMap.processingCoverage;
+            // Move headers/footers from partial to supported if actually checked
+            if (options.headersFooters) {
+                pc.partial = pc.partial.filter(x => x !== 'headers' && x !== 'footers');
+                if (!pc.supported.includes('headers')) pc.supported.push('headers');
+                if (!pc.supported.includes('footers')) pc.supported.push('footers');
+            }
+            // Move footnotes/endnotes from partial to supported if checked
+            if (options.footnotes) {
+                pc.partial = pc.partial.filter(x => x !== 'footnotes' && x !== 'endnotes');
+                if (!pc.supported.includes('footnotes')) pc.supported.push('footnotes');
+                if (!pc.supported.includes('endnotes')) pc.supported.push('endnotes');
+            }
             if (pc.unsupported.length > 0 || pc.partial.length > 0) {
                 const parts = [];
                 if (pc.partial.length > 0) parts.push(`Delimično: ${pc.partial.join(', ')}`);

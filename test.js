@@ -1166,6 +1166,28 @@ test('headersFooters=true + spacing=false does not produce spacing findings in h
     assert.strictEqual(spacingInHdr.length, 0, 'spacing=false should not produce spacing findings in headers');
 });
 
+test('Full mode: headers/footers not reported as partial coverage', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Header text.',style:'Header',runs:[{text:'Header text.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    doc.footerElements = [{type:'footer',index:0,text:'Footer text.',style:'Footer',runs:[{text:'Footer text.'}],id:'ftr-0',section:'(podnožje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    doc.processingCoverage = {supported:['paragraphs','headings'],partial:['headers','footers'],unsupported:[]};
+    const opts = {...require('./presets.js').FULL_PRESET, auditMode:'FULL_AUDIT'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const coverageFinding = findings.find(f=>f.category==='Pokrivenost');
+    assert(!coverageFinding, 'Full mode with headersFooters=true should not report partial coverage for headers/footers');
+});
+
+test('Basic mode: headers/footers reported as partial when present', () => {
+    const doc = makeDocMap([{text:'Body.'}]);
+    doc.headerElements = [{type:'header',index:0,text:'Header text.',style:'Header',runs:[{text:'Header text.'}],id:'hdr-0',section:'(zaglavlje)',isEmpty:false,isDirectQuote:false,quoteConfidence:0,paraId:null}];
+    doc.processingCoverage = {supported:['paragraphs','headings'],partial:['headers'],unsupported:[]};
+    const opts = {...require('./presets.js').BASIC_PRESET, auditMode:'PROOFREADING'};
+    const {findings} = RuleEngine.runAudit(doc, opts);
+    const coverageFinding = findings.find(f=>f.category==='Pokrivenost');
+    assert(coverageFinding, 'Basic mode should report partial coverage for headers');
+    assert(coverageFinding.original.includes('headers'), 'Should mention headers');
+});
+
 test('noteContentChecks=true + urls=false does not produce URL findings in notes', () => {
     const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1',text:'See https://example.com/path,',isEmpty:false}]});
     const opts = {footnotes:true, emptyNotes:true, noteContentChecks:true, urls:false, spacing:true, brackets:true};
