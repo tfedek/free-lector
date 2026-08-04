@@ -345,6 +345,7 @@
         s.can_be_marked_final = reqComplete && s.blockers_open === 0 && s.mandatory_open === 0 && s.verify_open === 0;
 
         const recommendationsOpen = all.filter(f => f.status === 'OPEN' && f.priority === 'PREPORUKA').length;
+        s.recommendations_open = recommendationsOpen;
 
         if (s.can_be_marked_final && recommendationsOpen === 0) {
             const done = s.by_status ? s.by_status.done : 0;
