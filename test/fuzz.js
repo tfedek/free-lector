@@ -180,10 +180,17 @@ async function runProperties() {
                 const doc = { name:'t.txt', rawText:'x', wordCount:1, paragraphCount:1, tableCount:0, headingCount:0,
                     elements:[], footnotes:[], endnotes:[], headerElements:[], footerElements:[],
                     processingCoverage:{supported:[],partial:[],unsupported:[]} };
-                const json = Exporter.buildAuditJson(doc, findings, [], { aiGrammar:true, visualLayout:true, aiStyle:true, spacing:true });
-                // All findings are DONE → can_be_marked_final must be true
-                assert.strictEqual(json.summary.can_be_marked_final, true,
-                    `Blocked by DONE findings: mandatory_open=${json.summary.mandatory_open}`);
+                const scopeOpts = { grammar:true, visualLayout:true, style:true, spacing:true };
+                // Baseline: no findings at all with same scope
+                const baseline = Exporter.buildAuditJson(doc, [], [], scopeOpts);
+                // With all findings resolved (DONE)
+                const withResolved = Exporter.buildAuditJson(doc, findings, [], scopeOpts);
+                // Resolved findings must not block final compared to baseline
+                assert.strictEqual(withResolved.summary.can_be_marked_final, baseline.summary.can_be_marked_final,
+                    `DONE findings changed can_be_marked_final from ${baseline.summary.can_be_marked_final} to ${withResolved.summary.can_be_marked_final}`);
+                assert.strictEqual(withResolved.summary.blockers_open, 0, 'blockers_open must be 0');
+                assert.strictEqual(withResolved.summary.mandatory_open, 0, 'mandatory_open must be 0');
+                assert.strictEqual(withResolved.summary.verify_open, 0, 'verify_open must be 0');
             }
         ), { numRuns: NUM_RUNS, seed: SEED });
         passed++; console.log('  \x1b[32m✓\x1b[0m DONE findings never block');

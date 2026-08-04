@@ -283,8 +283,10 @@ const Exporter = (() => {
             if (f.tableId) {
                 lines.push(`> Tabela: ${f.tableId} | Red: ${(f.rowIndex != null ? f.rowIndex + 1 : '')} | Kolona: ${(f.columnIndex != null ? f.columnIndex + 1 : '')} | Cell ID: ${f.cellId}`);
             }
-            lines.push(`- **Original:** \`${escMd(f.original)}\``);
-            lines.push(`- **Ispravka:** \`${escMd(f.replacement)}\``);
+            lines.push(`- **Original:**`);
+            lines.push(mdCodeBlock(f.original));
+            lines.push(`- **Ispravka:**`);
+            lines.push(mdCodeBlock(f.replacement));
             lines.push(`- ${escMd(f.rationale)} (pouzdanost: ${Math.round(f.confidence*100)}%, rule_id: ${f.rule_id || 'unknown'})`);
             lines.push('');
         });
@@ -394,6 +396,14 @@ const Exporter = (() => {
     function escMd(str) {
         if (!str) return '';
         return str.replace(/`/g, '\\`').replace(/\n/g, ' ').replace(/\|/g, '\\|');
+    }
+
+    function mdCodeBlock(value) {
+        const text = String(value ?? '');
+        const runs = text.match(/`+/g) || [];
+        const maxRun = runs.reduce((max, run) => Math.max(max, run.length), 0);
+        const fence = '`'.repeat(Math.max(3, maxRun + 1));
+        return `${fence}\n${text}\n${fence}`;
     }
 
     function detectLanguage(text) {

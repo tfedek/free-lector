@@ -1234,6 +1234,108 @@ test('Markdown export includes Preset line', () => {
 });
 
 // ==========================================
+// MARKDOWN BACKTICK REGRESSION
+// ==========================================
+section('\nMarkdown backtick export:');
+
+test('Markdown export: single backtick in original preserved', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-bt1',category:'Test',priority:'OBAVEZNO',confidence:0.9,original:'text with `one` backtick',replacement:'fixed',rationale:'r',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-0',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_bt'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    const md = Exporter.generateMarkdown(json);
+    assert(md.includes('text with `one` backtick'), 'Original with backtick must be preserved exactly');
+    assert(md.includes('```'), 'Should use fenced code block');
+});
+
+test('Markdown export: double backtick in original uses longer fence', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-bt2',category:'Test',priority:'OBAVEZNO',confidence:0.9,original:'text with ``two`` backticks',replacement:'fixed',rationale:'r',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-0',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_bt2'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    const md = Exporter.generateMarkdown(json);
+    assert(md.includes('text with ``two`` backticks'), 'Original with double backtick preserved');
+    assert(md.includes('```'), 'Should use fence >= 3');
+});
+
+test('Markdown export: newline in original preserved in code block', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-nl',category:'Test',priority:'OBAVEZNO',confidence:0.9,original:'line one\nline two',replacement:'fixed',rationale:'r',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-0',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_nl'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    const md = Exporter.generateMarkdown(json);
+    assert(md.includes('line one\nline two'), 'Newline must be preserved in code block, not replaced');
+});
+
+test('Markdown export: heading syntax in original does not become heading', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-hd',category:'Test',priority:'OBAVEZNO',confidence:0.9,original:'# heading syntax',replacement:'fixed',rationale:'r',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-0',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_hd'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    const md = Exporter.generateMarkdown(json);
+    const lines = md.split('\n');
+    const hashLine = lines.findIndex(l => l.trim() === '# heading syntax');
+    assert(hashLine > 0, 'Should find the # line');
+    assert(lines[hashLine - 1].match(/^`{3,}$/), 'Line before # must be a fence');
+});
+
+test('Markdown export: pipe in original does not break table', () => {
+    const doc = makeDocMap([{text:'T.'}]);
+    const findings = [{id:'F-pipe',category:'Test',priority:'OBAVEZNO',confidence:0.9,original:'cell | value',replacement:'fixed | also',rationale:'r',status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,globalPattern:false,section:'(t)',paragraphId:'p-0',tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_pipe'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+    const md = Exporter.generateMarkdown(json);
+    assert(md.includes('cell | value'), 'Pipe in original preserved in code block');
+    assert(md.includes('fixed | also'), 'Pipe in replacement preserved in code block');
+});
+
+// ==========================================
+// XLSX STRING-SAFETY REGRESSION
+// ==========================================
+section('\nXLSX string safety:');
+
+test('SheetJS aoa_to_sheet: formula-like strings remain type s', () => {
+    const XLSX = require('xlsx');
+    const ws = XLSX.utils.aoa_to_sheet([
+        ['=HYPERLINK("https://example.com","x")'],
+        ['+1+1'],
+        ['-1+1'],
+        ['@SUM(A1:A2)']
+    ]);
+    const cells = ['A1','A2','A3','A4'];
+    for (const addr of cells) {
+        const cell = ws[addr];
+        assert(cell, `Cell ${addr} must exist`);
+        assert.strictEqual(cell.t, 's', `Cell ${addr} must be string type, got: ${cell.t}`);
+        assert.strictEqual(cell.f, undefined, `Cell ${addr} must not have formula, got: ${cell.f}`);
+    }
+});
+
+test('Exporter workbook: document-controlled fields are string cells', () => {
+    const XLSX = require('xlsx');
+    const doc = makeDocMap([{text:'Test.'}]);
+    const findings = [{id:'F-xls',category:'Test',priority:'OBAVEZNO',confidence:0.9,
+        original:'=HYPERLINK("https://evil.com","click")',
+        replacement:'+1+1',
+        rationale:'-1+1 @SUM(A1:A2)',
+        status:'OPEN',isDirectQuote:false,requiresSourceVerification:false,autoFixable:false,
+        globalPattern:false,section:'=CMD("calc")',paragraphId:'p-0',
+        tableId:null,rowId:null,cellId:null,rowIndex:null,columnIndex:null,rule_id:'test_formula'}];
+    const json = Exporter.buildAuditJson(doc, findings, [], {spacing:true});
+
+    // Build the worksheet the same way the exporter does
+    const rows = [['#','Lokacija','Kategorija','Prioritet','Original','Ispravka','Obrazloženje','Pouzdanost','Rule ID','Status']];
+    json.findings.forEach((f, i) => {
+        rows.push([i+1, f.section||'', f.category||'', f.priority||'', f.original||'', f.replacement||'', f.rationale||'', Math.round(f.confidence*100)+'%', f.rule_id||'', f.status||'OPEN']);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Check cells in row 2 (data row) - columns B through G (document-controlled)
+    const checkCells = ['B2','C2','D2','E2','F2','G2'];
+    for (const addr of checkCells) {
+        const cell = ws[addr];
+        assert(cell, `Cell ${addr} must exist`);
+        assert.strictEqual(cell.t, 's', `Cell ${addr} must be string type, got: ${cell.t}`);
+        assert.strictEqual(cell.f, undefined, `Cell ${addr} must not have formula property, got f: ${JSON.stringify(cell.f)}`);
+    }
+});
+
+// ==========================================
 // SUMMARY - run async tests then report
 // ==========================================
 
