@@ -22,6 +22,12 @@
             margin-bottom: 0.5rem;
             color: var(--gray-700);
         }
+        .about-content h3 {
+            font-size: 1.1rem;
+            margin-top: 1.2rem;
+            margin-bottom: 0.4rem;
+            color: var(--gray-600);
+        }
         .about-content p {
             margin-bottom: 1rem;
             color: var(--gray-600);
@@ -91,6 +97,23 @@
 
         <h2>Ograničenja</h2>
         <p>Alat proverava tehničke artefakte - ne razume kontekst, ne proverava gramatiku, stil, niti sadržajnu tačnost. Ne zamenjuje ljudskog lektora, ali hvata greške koje oko lako previdi pri dugom čitanju.</p>
+
+        <h2>Evaluation framework</h2>
+        <p>Za merenje tačnosti alata uspostavljen je evaluation framework koji omogućava sistematsko poređenje nalaza sa ljudskim oznakama (labels).</p>
+
+        <h3>Wilson score interval</h3>
+        <p>Za svako pravilo se izračunava Wilson score confidence interval koji daje donju i gornju granicu tačnosti sa 95% pouzdanosti. Wilson interval je bolji od normalnog intervala za male uzorke i proporcije blizu 0 ili 1.</p>
+        <p>Primer: ako pravilo spacing_body ima 45 od 50 tačnih nalaza, Wilson interval može biti [0.78, 0.96], što znači da smo 95% sigurni da je prava tačnost između 78% i 96%.</p>
+
+        <h3>Brier score</h3>
+        <p>Meri kalibraciju confidence procena. Brier score je srednja kvadratna greška između predicted confidence i stvarnog ishoda (0 ili 1). Idealan skor je 0.0, a skor ispod 0.25 se smatra dobrom kalibracijom.</p>
+
+        <h3>Reliability bins</h3>
+        <p>Grupisanje nalaza po confidence opsezima (0.0-0.2, 0.2-0.4, ... 0.8-1.0) i poređenje srednje predikcije sa stvarnom tačnošću u svakom binu. Vizualizuje kalibracioni dijagram - koliko se predviđanja poklapaju sa stvarnošću.</p>
+
+        <h3>Sample size (Cochran formula)</h3>
+        <p>Cochran-ova formula određuje minimalni broj obeleženih nalaza potreban za statistički validnu procenu. Podržava design effect za korelaciju unutar istog dokumenta (nalazi u jednom dokumentu nisu nezavisni).</p>
+        <p>Primer: za marginu greške 5% i confidence 95%, sa p=0.5 i design effect 1, potrebno je oko 385 obeleženih nalaza.</p>
     </div>
 
     <footer class="site-footer">
