@@ -247,8 +247,8 @@ function run() {
 
         // Small sample warning
         let sampleWarning = null;
-        if (n < 10) sampleWarning = 'Veoma mali uzorak — rezultati nepouzdani';
-        else if (n < 30) sampleWarning = 'Mali uzorak — širok interval poverenja';
+        if (n < 10) sampleWarning = 'Veoma mali uzorak - rezultati nepouzdani';
+        else if (n < 30) sampleWarning = 'Mali uzorak - širok interval poverenja';
 
         // Collect rule_versions
         const rule_versions = [...new Set(recs.map(r => r.rule_version))];

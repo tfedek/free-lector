@@ -95,7 +95,7 @@ run.font.size = Pt(12)
 
 p = doc.add_paragraph()
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run('Verzija 1.0 \u2013 Avgust 2026')
+run = p.add_run('Verzija 1.0 - Avgust 2026')
 run.font.name = 'Cambria'
 run.font.size = Pt(12)
 
@@ -140,7 +140,7 @@ doc.add_paragraph(
 doc.add_paragraph(
     'Alat je namenjen autorima akademskih radova, lektorima i urednicima koji žele brzu, '
     'ponovljivu proveru tehničkih artefakata u tekstu pre slanja na recenziju ili '
-    'objavljivanje. Free Lector ne zamenjuje ljudskog lektora \u2013 on hvata ono što ljudsko '
+    'objavljivanje. Free Lector ne zamenjuje ljudskog lektora - on hvata ono što ljudsko '
     'oko lako previdi: duple razmake, neuparene zagrade, mešanje pisama, ravne navodnike, '
     'markdown ostatke iz konverzija, i slične sistematske greške.'
 )
@@ -173,7 +173,7 @@ add_numbered(
     'na različitim korpusima dokumenata.'
 )
 add_numbered(
-    'Održati privatnost korisnika \u2013 nijedan bajt dokumenta ne napušta pregledač.'
+    'Održati privatnost korisnika - nijedan bajt dokumenta ne napušta pregledač.'
 )
 
 
@@ -185,11 +185,11 @@ doc.add_heading('3.1 Principi dizajna', level=2)
 doc.add_paragraph(
     'Free Lector je dizajniran oko sledećih principa:'
 )
-add_bullet('Determinizam \u2013 isti ulaz uvek daje isti izlaz. Nema stohastičkih komponenti.')
-add_bullet('Privatnost \u2013 nijedan bajt dokumenta ne napušta pregledač.')
-add_bullet('Transparentnost \u2013 svako pravilo je čitljivo i razumljivo, korisnik tačno zna šta se proverava.')
-add_bullet('Nula zavisnosti od servera \u2013 ceo alat radi offline nakon prvog učitavanja.')
-add_bullet('Ponovljivost \u2013 rezultati su reproduktivni i verifikovani sa 149 automatskih testova.')
+add_bullet('Determinizam - isti ulaz uvek daje isti izlaz. Nema stohastičkih komponenti.')
+add_bullet('Privatnost - nijedan bajt dokumenta ne napušta pregledač.')
+add_bullet('Transparentnost - svako pravilo je čitljivo i razumljivo, korisnik tačno zna šta se proverava.')
+add_bullet('Nula zavisnosti od servera - ceo alat radi offline nakon prvog učitavanja.')
+add_bullet('Ponovljivost - rezultati su reproduktivni i verifikovani sa 149 automatskih testova.')
 
 
 
@@ -197,7 +197,7 @@ doc.add_heading('3.2 Iterativni ciklus razvoja', level=2)
 doc.add_paragraph('Razvoj je prolazio kroz više faza, svaka sa specifičnim ciljem:')
 
 p = doc.add_paragraph()
-run = p.add_run('Faza 1 \u2013 Osnovna funkcionalnost: ')
+run = p.add_run('Faza 1 - Osnovna funkcionalnost: ')
 run.bold = True
 p.add_run(
     'DOCX parsiranje, osnovne provere (razmaci, zagrade, navodnici, duple reči), '
@@ -205,7 +205,7 @@ p.add_run(
 )
 
 p = doc.add_paragraph()
-run = p.add_run('Faza 2 \u2013 Napredno OOXML parsiranje: ')
+run = p.add_run('Faza 2 - Napredno OOXML parsiranje: ')
 run.bold = True
 p.add_run(
     'Podrška za gridSpan, vMerge, tracked changes, nested tables, '
@@ -213,15 +213,15 @@ p.add_run(
 )
 
 p = doc.add_paragraph()
-run = p.add_run('Faza 3 \u2013 Fuzz testiranje: ')
+run = p.add_run('Faza 3 - Fuzz testiranje: ')
 run.bold = True
 p.add_run(
-    'Property-based testovi sa fast-check bibliotekom. 10 svojstava, 500\u201310000 slučajeva. '
+    'Property-based testovi sa fast-check bibliotekom. 10 svojstava, 500-10000 slučajeva. '
     'Otkriveni i popravljeni edge case-ovi.'
 )
 
 p = doc.add_paragraph()
-run = p.add_run('Faza 4 \u2013 Testiranje na realnim dokumentima: ')
+run = p.add_run('Faza 4 - Testiranje na realnim dokumentima: ')
 run.bold = True
 p.add_run(
     'Provera na akademskim radovima (doktorska disertacija, klasičnofilološke studije, '
@@ -229,7 +229,7 @@ p.add_run(
 )
 
 p = doc.add_paragraph()
-run = p.add_run('Faza 5 \u2013 Preset sistem i evaluation: ')
+run = p.add_run('Faza 5 - Preset sistem i evaluation: ')
 run.bold = True
 p.add_run(
     'Basic/Full/Custom presets. Wilson score confidence intervali. Brier score. '
@@ -241,16 +241,16 @@ p.add_run(
 doc.add_heading('3.3 Testiranje i validacija', level=2)
 doc.add_paragraph('Projekat ima tri nivoa testiranja:')
 add_numbered(
-    'Unit testovi (109 testova) \u2013 pokrivaju svaki rule, svaki edge case parsera, '
+    'Unit testovi (109 testova) - pokrivaju svaki rule, svaki edge case parsera, '
     'svaku kombinaciju opcija.'
 )
 add_numbered(
-    'Property-based fuzz testovi (10 svojstava, 500 slučajeva svako, 10000 za nightly) \u2013 '
+    'Property-based fuzz testovi (10 svojstava, 500 slučajeva svako, 10000 za nightly) - '
     'generišu nasumične ulaze i proveravaju invarijante: nema crash-a, nema gubitka teksta, '
     'determinizam, konzistentnost ID-jeva.'
 )
 add_numbered(
-    'Evaluation testovi (30 testova) \u2013 proveravaju CLI alate za evaluaciju: '
+    'Evaluation testovi (30 testova) - proveravaju CLI alate za evaluaciju: '
     'validaciju CSV-a, Wilson interval izračunavanje, sample size formulu, '
     'odbijanje nevalidnih ulaza.'
 )
@@ -274,7 +274,7 @@ add_bullet('Paragrafi sa stilovima, run-ovima, i formatiranjem')
 add_bullet('Tabele sa gridSpan (spojene kolone) i vMerge (spojeni redovi)')
 add_bullet('Fusnote i endnote')
 add_bullet('Headers i footers')
-add_bullet('Tracked changes \u2013 detektuje, ne primenjuje')
+add_bullet('Tracked changes - detektuje, ne primenjuje')
 add_bullet('Numerisane liste sa lvlOverride i lvlRestart')
 add_bullet('Stilovi za detekciju naslova i TOC unosa')
 add_bullet('ZIP bezbednost: odbijanje ekstreman compression ratio i zip-bomb detekcija')
@@ -289,17 +289,17 @@ doc.add_heading('4.2 Rule Engine (rules.js)', level=2)
 doc.add_paragraph(
     'Deterministički engine koji primenjuje pravila na parsiranu strukturu dokumenta. '
     'Svako pravilo je obična JavaScript funkcija koja prima docMap i vraća niz nalaza. '
-    'Nema ML modela, nema heuristika koje se menjaju \u2013 isti ulaz uvek daje isti izlaz.'
+    'Nema ML modela, nema heuristika koje se menjaju - isti ulaz uvek daje isti izlaz.'
 )
 doc.add_paragraph('Svaki nalaz (finding) sadrži:')
-add_bullet('rule_id \u2013 stabilan identifikator pravila (npr. spacing_body, brackets_header)')
-add_bullet('category \u2013 kategorija greške (Razmaci, Zagrade, Tipografija...)')
-add_bullet('priority \u2013 Obavezno, Blokirajuće, Proveriti, ili Preporuka')
-add_bullet('confidence \u2013 heuristička procena pouzdanosti (0.0\u20131.0)')
-add_bullet('original \u2013 originalni tekst sa greškom')
-add_bullet('replacement \u2013 predlog ispravke')
-add_bullet('rationale \u2013 obrazloženje zašto je ovo greška')
-add_bullet('section \u2013 lokacija u dokumentu')
+add_bullet('rule_id - stabilan identifikator pravila (npr. spacing_body, brackets_header)')
+add_bullet('category - kategorija greške (Razmaci, Zagrade, Tipografija...)')
+add_bullet('priority - Obavezno, Blokirajuće, Proveriti, ili Preporuka')
+add_bullet('confidence - heuristička procena pouzdanosti (0.0-1.0)')
+add_bullet('original - originalni tekst sa greškom')
+add_bullet('replacement - predlog ispravke')
+add_bullet('rationale - obrazloženje zašto je ovo greška')
+add_bullet('section - lokacija u dokumentu')
 doc.add_paragraph(
     'Napomena: confidence je heuristički rang, ne empirijski kalibrisan '
     'verovatnosni skor. Služi za sortiranje nalaza po ozbiljnosti.'
@@ -311,7 +311,7 @@ p = doc.add_paragraph()
 run = p.add_run('Osnovna provera (Basic) ')
 run.bold = True
 p.add_run(
-    '\u2013 samo visoko-pouzdane provere koje retko daju false positive: razmaci, zagrade, '
+    '- samo visoko-pouzdane provere koje retko daju false positive: razmaci, zagrade, '
     'navodnici, mešanje pisama, duple reči, fusnote. Headers/footers su isključeni. '
     'Ovo je podrazumevani režim.'
 )
@@ -319,7 +319,7 @@ p = doc.add_paragraph()
 run = p.add_run('Puna provera (Full) ')
 run.bold = True
 p.add_run(
-    '\u2013 sve provere uključene: bibliografija, TOC, numeracija, URL-ovi, grčki citati, '
+    '- sve provere uključene: bibliografija, TOC, numeracija, URL-ovi, grčki citati, '
     'markdown artefakti, ALL-CAPS, headers/footers. '
     'Može dati više false positive-a ali ništa ne propušta.'
 )
@@ -327,7 +327,7 @@ p = doc.add_paragraph()
 run = p.add_run('Prilagođeno (Custom) ')
 run.bold = True
 p.add_run(
-    '\u2013 korisnik ručno bira koje provere želi. Automatski se aktivira '
+    '- korisnik ručno bira koje provere želi. Automatski se aktivira '
     'kada korisnik promeni bilo koji checkbox iz Basic ili Full režima.'
 )
 
@@ -336,14 +336,14 @@ p.add_run(
 doc.add_heading('4.4 Eksporter (exporter.js)', level=2)
 doc.add_paragraph('Generiše tri formata izveštaja:')
 add_bullet(
-    'Excel (.xlsx) \u2013 koristi SheetJS biblioteku. Sadrži sve nalaze sa kolonama: '
+    'Excel (.xlsx) - koristi SheetJS biblioteku. Sadrži sve nalaze sa kolonama: '
     'lokacija, kategorija, prioritet, original, predlog, obrazloženje, pouzdanost, rule_id, preset.'
 )
 add_bullet(
-    'Markdown (.md) \u2013 tabelarni format pogodan za pregled u bilo kom tekst editoru.'
+    'Markdown (.md) - tabelarni format pogodan za pregled u bilo kom tekst editoru.'
 )
 add_bullet(
-    'JSON (.json) \u2013 mašinsko-čitljiv format za dalju obradu ili integraciju sa drugim alatima.'
+    'JSON (.json) - mašinsko-čitljiv format za dalju obradu ili integraciju sa drugim alatima.'
 )
 
 doc.add_heading('4.5 Korisnički interfejs (app.js, index.html)', level=2)
@@ -440,9 +440,9 @@ doc.add_paragraph(
 
 doc.add_heading('6.3 Reliability bins', level=2)
 doc.add_paragraph(
-    'Grupisanje nalaza po confidence opsezima (0.0\u20130.2, 0.2\u20130.4, ... 0.8\u20131.0) '
+    'Grupisanje nalaza po confidence opsezima (0.0-0.2, 0.2-0.4, ... 0.8-1.0) '
     'i poređenje srednje predikcije sa stvarnom tačnošću u svakom binu. '
-    'Vizualizuje kalibracioni dijagram \u2013 koliko se predviđanja poklapaju sa stvarnošću.'
+    'Vizualizuje kalibracioni dijagram - koliko se predviđanja poklapaju sa stvarnošću.'
 )
 
 doc.add_heading('6.4 Sample size (Cochran formula)', level=2)
@@ -465,7 +465,7 @@ doc.add_paragraph('Sledeći alati i tehnologije su korišćeni tokom razvoja pro
 tools = [
     ('Programski jezik', 'JavaScript (ES2020+), bez TypeScript-a, bez build step-a'),
     ('Verziona kontrola', 'Git, GitHub (https://github.com/tfedek/free-lector)'),
-    ('Hosting', 'GitHub Pages \u2013 statičko hostovanje bez servera'),
+    ('Hosting', 'GitHub Pages - statičko hostovanje bez servera'),
     ('Testiranje', 'Custom test framework (test.js), fast-check za property-based testove'),
     ('DOCX parsiranje', 'JSZip (ZIP ekstrakcija), ručno XML parsiranje (DOMParser)'),
     ('Excel izvoz', 'SheetJS (xlsx.full.min.js)'),
@@ -495,34 +495,34 @@ doc.add_paragraph(
     'Free Lector ima jasna ograničenja koja proizlaze iz rule-based pristupa:'
 )
 add_numbered(
-    'Ne razume kontekst \u2013 ne može oceniti da li je rečenica logički ispravna, '
+    'Ne razume kontekst - ne može oceniti da li je rečenica logički ispravna, '
     'samo da li ima tehničke artefakte.'
 )
 add_numbered(
-    'Ne proverava gramatiku \u2013 padežne greške, slaganje subjekta i predikata, '
-    'red reči \u2013 to zahteva napredne lingvističke modele.'
+    'Ne proverava gramatiku - padežne greške, slaganje subjekta i predikata, '
+    'red reči - to zahteva napredne lingvističke modele.'
 )
 add_numbered(
-    'Ne proverava stil \u2013 ne može reći da li je tekst preformalan, preopširan, '
+    'Ne proverava stil - ne može reći da li je tekst preformalan, preopširan, '
     'ili neodgovarajuć za ciljnu publiku.'
 )
 add_numbered(
-    'Ne proverava sadržajnu tačnost \u2013 ne može verifikovati da li su podaci, '
+    'Ne proverava sadržajnu tačnost - ne može verifikovati da li su podaci, '
     'datumi, ili reference tačni.'
 )
 add_numbered(
-    'Ne proverava prevode \u2013 ne može oceniti kvalitet prevoda grčkih ili '
+    'Ne proverava prevode - ne može oceniti kvalitet prevoda grčkih ili '
     'latinskih citata.'
 )
 add_numbered(
-    'Može dati false positive za neuobičajene ali validne konstrukcije \u2013 '
+    'Može dati false positive za neuobičajene ali validne konstrukcije - '
     'zato svaki nalaz ima confidence procenu i prioritet.'
 )
 add_numbered(
     'Podržava samo DOCX format. PDF, ODT, i drugi formati nisu podržani.'
 )
 add_numbered(
-    'Nema OCR \u2013 ne može čitati skenirane dokumente.'
+    'Nema OCR - ne može čitati skenirane dokumente.'
 )
 doc.add_paragraph(
     'Free Lector je alat koji dopunjuje, ne zamenjuje, rad ljudskog lektora. '

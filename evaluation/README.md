@@ -9,7 +9,7 @@ koristeći ručno obeležene uzorke iz stvarnih dokumenata.
 
 **Zašto samo preciznost:** Free Lector ne može izmeriti recall jer ne postoji
 iscrpan spisak svih grešaka u dokumentu. Za recall bi bio potreban "zlatni
-standard" — kompletno lektorisan dokument. To zahteva značajno vreme
+standard" - kompletno lektorisan dokument. To zahteva značajno vreme
 profesionalnog lektora. Zbog toga ne izveštavamo recall, F1 niti ukupnu tačnost (accuracy).
 
 **Zašto je confidence heuristički:** Vrednost `predicted_confidence` u pravilima
@@ -21,28 +21,28 @@ Brier score pomaže da se proveri koliko su te procene u praksi tačne.
 | Kolona | Obavezna | Opis |
 |--------|----------|------|
 | document_id | Da | Stabilni ID dokumenta (iz export JSON-a) |
-| version_id | Da | Version ID dokumenta — obezbeđuje da se obeležavanje odnosi na tačnu verziju |
+| version_id | Da | Version ID dokumenta - obezbeđuje da se obeležavanje odnosi na tačnu verziju |
 | rule_id | Da | ID pravila koje je proizvelo nalaz (npr. `duplicate_words_body`) |
 | finding_id | Da | ID nalaza (npr. f-17) |
 | location_key | Da | Lokacija nalaza (paragraphId) |
-| predicted_confidence | Da | Confidence vrednost koju je pravilo dodelilo (0.0–1.0) |
+| predicted_confidence | Da | Confidence vrednost koju je pravilo dodelilo (0.0-1.0) |
 | label | Da | 1 = ispravno prijavljen nalaz (true positive), 0 = lažni pozitiv (false positive) |
-| rule_version | Da | Verzija pravila (npr. r4-82tests) — omogućava praćenje promena pravila kroz vreme |
+| rule_version | Da | Verzija pravila (npr. r4-82tests) - omogućava praćenje promena pravila kroz vreme |
 | reviewer | Da | Identifikator osobe koja je obeležila |
 | note | Ne | Opcioni komentar (može biti prazan) |
 
 ### Definicija labela
 
-- **1 (True Positive):** Nalaz je korektan — postoji realna greška koju je alat prijavio.
-- **0 (False Positive):** Nalaz je pogrešan — alat je prijavio grešku koja ne postoji.
+- **1 (True Positive):** Nalaz je korektan - postoji realna greška koju je alat prijavio.
+- **0 (False Positive):** Nalaz je pogrešan - alat je prijavio grešku koja ne postoji.
 
 ### Svrha ključnih kolona
 
-- **version_id** — Vezuje obeležene podatke za tačnu verziju dokumenta. Ako se dokument promeni, stari
+- **version_id** - Vezuje obeležene podatke za tačnu verziju dokumenta. Ako se dokument promeni, stari
   labeli se ne mešaju sa novim.
-- **rule_version** — Pravila se menjaju kroz vreme. Ovo omogućava poređenje preciznosti
+- **rule_version** - Pravila se menjaju kroz vreme. Ovo omogućava poređenje preciznosti
   pre i posle izmene pravila.
-- **rule_id** — Identifikator pravila. Evaluacija se grupiše po rule_id, ne po category.
+- **rule_id** - Identifikator pravila. Evaluacija se grupiše po rule_id, ne po category.
 
 ## Kako dodati labele
 
@@ -52,12 +52,12 @@ Brier score pomaže da se proveri koliko su te procene u praksi tačne.
    - Koristiti `document_id` i `version_id` iz JSON eksporta
    - `rule_id` iz nalaza
    - `finding_id` iz nalaza
-   - `location_key` — paragraphId nalaza
-   - `predicted_confidence` — confidence vrednost nalaza
-   - `label` — 1 ili 0
-   - `rule_version` — verzija pravila (navesti poslednju poznatu)
-   - `reviewer` — vaš identifikator
-   - `note` — opcioni komentar
+   - `location_key` - paragraphId nalaza
+   - `predicted_confidence` - confidence vrednost nalaza
+   - `label` - 1 ili 0
+   - `rule_version` - verzija pravila (navesti poslednju poznatu)
+   - `reviewer` - vaš identifikator
+   - `note` - opcioni komentar
 
 ## Pokretanje
 
@@ -77,7 +77,7 @@ node evaluation/sample-size.js --p 0.5 --margin 0.05 --confidence 0.95 --design-
 ### Wilson interval
 
 Wilson 95% confidence interval daje raspon u kojem se očekuje prava preciznost pravila.
-Širina intervala zavisi od veličine uzorka — manji uzorak → širi interval.
+Širina intervala zavisi od veličine uzorka - manji uzorak → širi interval.
 
 ### Brier score
 
@@ -104,7 +104,7 @@ nezavisne nalaze."
 McNemar test služi za poređenje dve verzije sistema na istom uzorku. Trenutno:
 
 1. Identifikatori lokacija (location_key) nisu garantovano stabilni kroz verzije parsera/pravila
-2. Prvo je potreban zlatni standard — skup kandidatskih lokacija koji ostaje stabilan
+2. Prvo je potreban zlatni standard - skup kandidatskih lokacija koji ostaje stabilan
 3. Tek nakon što postoji stabilno uparivanje, McNemar se može primeniti
 
 Dok ti uslovi ne budu ispunjeni, implementacija bi davala nepouzdane rezultate.
@@ -120,8 +120,8 @@ Kada ti uslovi budu ispunjeni, skript će biti dodat.
 
 ## Fajlovi
 
-- `labels.csv` — ručno obeleženi uzorci
-- `evaluate-confidence.js` — izračunava precision, Wilson CI, Brier score po rule_id
-- `sample-size.js` — izračunava potrebnu veličinu uzorka (Cochran formula + design effect)
-- `report/` — generisani izveštaji (gitignore-ovano)
-- `README.md` — ovaj fajl
+- `labels.csv` - ručno obeleženi uzorci
+- `evaluate-confidence.js` - izračunava precision, Wilson CI, Brier score po rule_id
+- `sample-size.js` - izračunava potrebnu veličinu uzorka (Cochran formula + design effect)
+- `report/` - generisani izveštaji (gitignore-ovano)
+- `README.md` - ovaj fajl
