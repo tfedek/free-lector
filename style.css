@@ -256,3 +256,19 @@ body {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
 }
+
+
+
+.site-footer {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--gray-500);
+    font-size: 0.85rem;
+}
+.site-footer a {
+    color: var(--primary);
+    text-decoration: none;
+}
+.site-footer a:hover {
+    text-decoration: underline;
+}
