@@ -99,12 +99,6 @@ run = p.add_run('Verzija 1.0 - Avgust 2026')
 run.font.name = 'Cambria'
 run.font.size = Pt(12)
 
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run('Autor: Tomislav Fedek')
-run.font.name = 'Cambria'
-run.font.size = Pt(12)
-
 doc.add_page_break()
 
 

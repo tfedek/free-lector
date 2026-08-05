@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free Lector - O projektu</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .about-content {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+            line-height: 1.7;
+        }
+        .about-content h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+        .about-content h2 {
+            font-size: 1.3rem;
+            margin-top: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--gray-700);
+        }
+        .about-content p {
+            margin-bottom: 1rem;
+            color: var(--gray-600);
+        }
+        .about-content ul {
+            margin-bottom: 1rem;
+            padding-left: 1.5rem;
+        }
+        .about-content li {
+            margin-bottom: 0.4rem;
+            color: var(--gray-600);
+        }
+        .about-back {
+            display: inline-block;
+            margin-bottom: 2rem;
+            color: var(--primary);
+            text-decoration: none;
+        }
+        .about-back:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="about-content">
+        <a href="index.html" class="about-back">&larr; Nazad na alat</a>
+
+        <h1>O projektu</h1>
+        <p>Free Lector je besplatan alat za determinističku tehničku proveru dokumenata. Radi isključivo u vašem pregledaču - ne šalje podatke ni na jedan server i ne zahteva instalaciju.</p>
+
+        <p>Radi kao spell-check u Word-u - ima unapred definisana pravila i proverava dokument prema njima. Nema nikakvog pogađanja, samo tačno definisane provere. Isti dokument uvek daje identičan rezultat.</p>
+
+        <h2>Šta proverava</h2>
+        <ul>
+            <li><strong>Razmaci i interpunkcija</strong> - dupli razmaci, razmak pre zapete/tačke, razmak posle otvorene zagrade</li>
+            <li><strong>Nebalansirane zagrade</strong> - neuparene (, [, {, tačka-zarez umesto zatvorene zagrade</li>
+            <li><strong>Tipografski navodnici</strong> - ravni navodnici umesto tipografskih, neupareni navodnici</li>
+            <li><strong>Mešanje ćirilice i latinice</strong> - latinično slovo u ćiriličnom tekstu i obrnuto</li>
+            <li><strong>Duple reči</strong> - uzastopno ponovljene reči</li>
+            <li><strong>ALL-CAPS</strong> - reči napisane velikim slovima koje nisu skraćenice</li>
+            <li><strong>Markdown artefakti</strong> - ostaci formatiranja (*, **, #) u Word dokumentu</li>
+            <li><strong>Bibliografija</strong> - nedostajuća godina, izdavač</li>
+            <li><strong>Sadržaj vs naslovi</strong> - neslaganje automatskog sadržaja sa naslovima</li>
+            <li><strong>Numeracija lista</strong> - preskočeni brojevi</li>
+            <li><strong>URL validacija</strong> - URL-ovi završeni interpunkcijom</li>
+            <li><strong>Grčki citati</strong> - citati bez prevoda u okruženju</li>
+            <li><strong>Fusnote i endnote</strong> - prazne fusnote, greške u sadržaju</li>
+            <li><strong>Headers i footers</strong> - provera zaglavlja i podnožja</li>
+            <li><strong>Ponovljeni pasusi</strong> - identični paragrafi u dokumentu</li>
+        </ul>
+
+        <h2>Podržani formati</h2>
+        <p>DOCX (Microsoft Word), Markdown (.md), i obični tekst (.txt). Za DOCX podržava složene dokumente: tabele sa spojenim ćelijama, tracked changes, numerisane liste, fusnote, endnote, headers i footers.</p>
+
+        <h2>Režimi rada</h2>
+        <ul>
+            <li><strong>Osnovna provera</strong> - samo visoko-pouzdane provere (razmaci, zagrade, navodnici, mešanje pisama, duple reči). Podrazumevani režim.</li>
+            <li><strong>Puna provera</strong> - sve provere uključene. Može dati više nalaza za ručnu proveru, ali ništa ne propušta.</li>
+            <li><strong>Prilagođeno</strong> - ručno biranje provera.</li>
+        </ul>
+
+        <h2>Izvoz nalaza</h2>
+        <p>Sve pronađene greške se mogu izvesti u tri formata: Excel (.xlsx), Markdown (.md), ili JSON (.json).</p>
+
+        <h2>Privatnost</h2>
+        <p>Nijedan bajt vašeg dokumenta ne napušta vaš računar. Nema servera, nema baze podataka, nema registracije. Ceo proces se odvija lokalno u vašem browseru.</p>
+
+        <h2>Ograničenja</h2>
+        <p>Alat proverava tehničke artefakte - ne razume kontekst, ne proverava gramatiku, stil, niti sadržajnu tačnost. Ne zamenjuje ljudskog lektora, ali hvata greške koje oko lako previdi pri dugom čitanju.</p>
+    </div>
+
+    <footer class="site-footer">
+        <a href="index.html">&larr; Nazad na alat</a>
+    </footer>
+</body>
+</html>
