@@ -79,12 +79,29 @@
     document.querySelectorAll('[data-check]').forEach(cb => {
         cb.addEventListener('change', () => {
             if (!applyingPreset) {
-                activePreset = 'custom';
-                // Uncheck both preset radios to indicate custom mode
-                modeRadios.forEach(r => r.checked = false);
-                // Show 'Prilagođeno' label if available
-                const customLabel = document.getElementById('custom-preset-label');
-                if (customLabel) customLabel.classList.remove('hidden');
+                // Check if current state matches any preset
+                const currentState = {};
+                document.querySelectorAll('[data-check]').forEach(el => { currentState[el.dataset.check] = el.checked; });
+                const matchesBasic = Object.keys(BASIC_PRESET).every(k => currentState[k] === BASIC_PRESET[k]);
+                const matchesFull = Object.keys(FULL_PRESET).every(k => currentState[k] === FULL_PRESET[k]);
+                if (matchesBasic) {
+                    activePreset = 'basic';
+                    const radio = document.querySelector('input[name="audit-mode"][value="PROOFREADING"]');
+                    if (radio) radio.checked = true;
+                    const customLabel = document.getElementById('custom-preset-label');
+                    if (customLabel) customLabel.classList.add('hidden');
+                } else if (matchesFull) {
+                    activePreset = 'full';
+                    const radio = document.querySelector('input[name="audit-mode"][value="FULL_AUDIT"]');
+                    if (radio) radio.checked = true;
+                    const customLabel = document.getElementById('custom-preset-label');
+                    if (customLabel) customLabel.classList.add('hidden');
+                } else {
+                    activePreset = 'custom';
+                    modeRadios.forEach(r => r.checked = false);
+                    const customLabel = document.getElementById('custom-preset-label');
+                    if (customLabel) customLabel.classList.remove('hidden');
+                }
             }
         });
     });

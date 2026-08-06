@@ -173,22 +173,9 @@ const RuleEngine = (() => {
                     }
 
                     if (doBrackets) {
-                        for (const [open, close] of [['(',')'],['[',']'],['{','}']]) {
-                            let depth = 0;
-                            let prematureClose = false;
-                            for (let i = 0; i < text.length; i++) {
-                                if (text[i] === open) depth++;
-                                else if (text[i] === close) {
-                                    depth--;
-                                    if (depth < 0) { prematureClose = true; depth = 0; }
-                                }
-                            }
-                            if (depth !== 0 || prematureClose) {
-                                const rationale = prematureClose
-                                    ? `Prerano zatvorena zagrada ${close} pre otvaranja ${open} u ćeliji.`
-                                    : `Neuparene zagrade u ćeliji (${cell.cellId}).`;
-                                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${open}${close} u ćeliji]`, rationale, ruleId: 'unbalanced_brackets_table_cell', ...cm }));
-                            }
+                        const br = checkBracketsInText(text);
+                        if (br.hasError) {
+                            findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene/ukrštene zagrade u ćeliji]`, rationale: br.errorType + ` Ćelija: ${cell.cellId}.`, ruleId: 'unbalanced_brackets_table_cell', ...cm }));
                         }
                     }
 
@@ -307,18 +294,10 @@ const RuleEngine = (() => {
             }
 
             if (options.brackets) {
-                for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
-                    let depth = 0; let prematureClose = false;
-                    for (let i = 0; i < text.length; i++) {
-                        if (text[i]===o) depth++;
-                        else if (text[i]===c) { depth--; if (depth < 0) { prematureClose = true; depth = 0; } }
-                    }
-                    if (depth !== 0 || prematureClose) {
-                        const rationale = prematureClose
-                            ? `Prerano zatvorena zagrada ${c} u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`
-                            : `Neuparene zagrade u ${el.type === 'header' ? 'zaglavlju' : 'podnožju'}.`;
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene zagrade ${o}${c}]`, rationale, ruleId: 'unbalanced_brackets_header_footer' }));
-                    }
+                const br = checkBracketsInText(text);
+                if (br.hasError) {
+                    const loc = el.type === 'header' ? 'zaglavlju' : 'podnožju';
+                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0,50), replacement: `[neuparene/ukrštene zagrade u ${loc}]`, rationale: br.errorType, ruleId: 'unbalanced_brackets_header_footer' }));
                 }
             }
 
@@ -882,18 +861,9 @@ const RuleEngine = (() => {
             }
 
             if (options.brackets) {
-                for (const [o,c] of [['(',')'],['[',']'],['{','}']]) {
-                    let depth = 0; let prematureClose = false;
-                    for (let i = 0; i < text.length; i++) {
-                        if (text[i]===o) depth++;
-                        else if (text[i]===c) { depth--; if (depth < 0) { prematureClose = true; depth = 0; } }
-                    }
-                    if (depth !== 0 || prematureClose) {
-                        const rationale = prematureClose
-                            ? `Prerano zatvorena zagrada ${c} u ${noteType.toLowerCase()} ${note.id}.`
-                            : `Neuparene zagrade u ${noteType.toLowerCase()} ${note.id}.`;
-                        findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene zagrade ${o}${c}]`, rationale, ruleId: 'unbalanced_brackets_note' }));
-                    }
+                const br = checkBracketsInText(text);
+                if (br.hasError) {
+                    findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene/ukrštene zagrade u ${noteType.toLowerCase()}]`, rationale: br.errorType + ` ${noteType} ${note.id}.`, ruleId: 'unbalanced_brackets_note' }));
                 }
             }
 
@@ -1086,6 +1056,42 @@ const RuleEngine = (() => {
         if (s > 0) ctx = '...' + ctx;
         if (e < text.length) ctx += '...';
         return ctx;
+    }
+
+    function checkBracketsInText(text) {
+        // Shared stack-based bracket checker for table cells, headers/footers, notes
+        const openChars = '([{'; const closeChars = ')]}';
+        const stack = [];
+        let hasError = false;
+        let errorType = '';
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            const openIdx = openChars.indexOf(ch);
+            const closeIdx = closeChars.indexOf(ch);
+            if (openIdx !== -1) {
+                stack.push({ char: ch, type: openIdx });
+            } else if (closeIdx !== -1) {
+                if (stack.length === 0) {
+                    hasError = true;
+                    errorType = `Zatvorena ${ch} bez otvorene.`;
+                    break;
+                } else if (stack[stack.length-1].type !== closeIdx) {
+                    hasError = true;
+                    const top = stack[stack.length-1];
+                    errorType = `Ukrštene zagrade: ${top.char}...${ch}.`;
+                    break;
+                } else {
+                    stack.pop();
+                }
+            }
+        }
+        if (!hasError && stack.length > 0) {
+            hasError = true;
+            const item = stack[0];
+            const expected = closeChars[item.type];
+            errorType = `Otvorena ${item.char} bez ${expected}.`;
+        }
+        return { hasError, errorType };
     }
 
     function replaceAtOffset(text, pos, radius, matchLen, replacement) {

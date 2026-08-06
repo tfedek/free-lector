@@ -904,7 +904,7 @@ test(')( in cell detected', () => {
     const {findings} = RuleEngine.runAudit(doc, {brackets:true});
     const bf = findings.filter(f=>f.category==='Zagrade'&&f.cellId);
     assert(bf.length >= 1, 'Should detect )( in cell');
-    assert(bf[0].rationale.includes('Prerano'), 'Should mention premature close');
+    assert(bf[0].rationale.includes('Zatvorena'), 'Should mention premature close');
 });
 test(')( in footnote detected', () => {
     const doc = makeDocMap([{text:'Body.'}], {footnotes:[{id:'1', text:'tekst )( greška', isEmpty:false}]});
