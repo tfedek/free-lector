@@ -249,7 +249,7 @@ const Exporter = (() => {
         const d = auditJson.document;
         const st = auditJson.audit_status;
 
-        lines.push(`# Lektorsko-korektorski audit - ${d.name}`);
+        lines.push(`# Lektorsko-korektorski audit - ${escMd(d.name)}`);
         lines.push('');
         lines.push(`**Document ID:** ${d.document_id}  `);
         lines.push(`**Version ID:** ${d.version_id}  `);
@@ -401,6 +401,12 @@ const Exporter = (() => {
     }
 
     function escMd(str) {
+        if (!str) return '';
+        return str.replace(/[\\`*_{}[\]()#+\-.!|<>~]/g, '\\$&').replace(/\n/g, ' ').replace(/\r/g, '');
+    }
+
+    function escMdInline(str) {
+        // Lighter escaping for inline content (original/replacement go in code blocks)
         if (!str) return '';
         return str.replace(/`/g, '\\`').replace(/\n/g, ' ').replace(/\|/g, '\\|');
     }

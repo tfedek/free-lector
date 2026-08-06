@@ -439,6 +439,7 @@
         filterSection.value = 'all';
         if (filterStatus) filterStatus.value = 'all';
         if (filterAutofix) filterAutofix.checked = false;
+        if (exportFilter) exportFilter.value = 'all';
     }
 
     // ==========================================

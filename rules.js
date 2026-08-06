@@ -160,13 +160,15 @@ const RuleEngine = (() => {
                         while ((m = sbp.exec(text)) !== null) {
                             if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
+                            const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]);
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: repl, rationale: `Razmak pre \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
                         const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                         while ((m = nsa.exec(text)) !== null) {
                             if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
                             const ctx = getContext(text, m.index, 20);
-                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
+                            const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1] + ' ' + m[2]);
+                            findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: repl, rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
                     }
 
@@ -423,20 +425,24 @@ const RuleEngine = (() => {
                 const expected = closeChars[item.type];
                 findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.`, ruleId: 'unbalanced_brackets_body' }));
             }
-            // ; where ) should be - detected during stack pass above
-            // Check: if we saw ; while ( was open and never got closed
+            // ; where ) should be - track per unclosed (
             {
-                let parenDepth = 0;
-                let semicolonInOpenParen = -1;
+                const parenStack = []; // each entry: { pos, semicolonPos }
                 for (let i = 0; i < text.length; i++) {
-                    if (text[i] === '(') parenDepth++;
-                    else if (text[i] === ')') { if (parenDepth > 0) parenDepth--; }
-                    else if (text[i] === ';' && parenDepth > 0 && semicolonInOpenParen === -1) {
-                        semicolonInOpenParen = i;
+                    if (text[i] === '(') {
+                        parenStack.push({ pos: i, semicolonPos: -1 });
+                    } else if (text[i] === ')') {
+                        if (parenStack.length > 0) parenStack.pop();
+                    } else if (text[i] === ';' && parenStack.length > 0) {
+                        const top = parenStack[parenStack.length - 1];
+                        if (top.semicolonPos === -1) top.semicolonPos = i;
                     }
                 }
-                if (semicolonInOpenParen !== -1 && parenDepth > 0) {
-                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(text, semicolonInOpenParen, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.', ruleId: 'unbalanced_brackets_body' }));
+                // Report only semicolons inside actually unclosed parens
+                for (const entry of parenStack) {
+                    if (entry.semicolonPos !== -1) {
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(text, entry.semicolonPos, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.', ruleId: 'unbalanced_brackets_body' }));
+                    }
                 }
             }
         }
@@ -514,11 +520,11 @@ const RuleEngine = (() => {
             const dbl = /  +/g;
             while ((m = dbl.exec(text)) !== null) { const ctx = getContext(text, m.index, 25); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.99, original: ctx, replacement: ctx.replace(/  +/g, ' '), rationale: 'Višestruki razmak.', autoFixable: true, ruleId: 'spacing_body' })); }
             const sbp = / +([,.:;!?])/g;
-            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;  const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
+            while ((m = sbp.exec(text)) !== null) { const b = text.substring(Math.max(0,m.index-5),m.index); if (b.match(/https?:$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue;  const ctx = getContext(text, m.index, 20); const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: repl, rationale: `Razmak pre \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
             const sbc = / +([)\]}»\u201C])/g;
-            while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}»\u201C])/, '$1'), rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
+            while ((m = sbc.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: repl, rationale: 'Razmak pre zatvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const sao = /([(\[{«\u201E]) +/g;
-            while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
+            while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: repl, rationale: 'Razmak posle otvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
             while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/) || c5.match(/[0-9a-fA-F]{2}:[0-9a-fA-F]/) || c5.match(/(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define|w|r|m|ns|mc|wp|v|a|o|c|dc|cp|xsi|xsd|xml)\:/i)) continue; const ctx = getContext(text, m.index, 20); const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1] + ' ' + m[2]); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: repl, rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
         }
@@ -857,18 +863,21 @@ const RuleEngine = (() => {
                     const b = text.substring(Math.max(0,m.index-5),m.index);
                     if (b.match(/https?:$/)) continue; if (m[1] === '.' && text.substring(m.index + m[0].length).match(/^\.{2,}/)) continue; 
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: ctx.replace(/ +([,.:;!?])/, '$1'), rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
+                    const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.97, original: ctx, replacement: repl, rationale: `Razmak pre \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
                 const sbc = / +([)\]}»\u201C])/g;
                 while ((m = sbc.exec(text)) !== null) {
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/ +([)\]}»\u201C])/, '$1'), rationale: `Razmak pre zatvorene zagrade u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
+                    const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1]);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: repl, rationale: `Razmak pre zatvorene zagrade u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
                 const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                 while ((m = nsa.exec(text)) !== null) {
                     if (text.substring(Math.max(0,m.index-10),m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
                     const ctx = getContext(text, m.index, 20);
-                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
+                    const repl = replaceAtOffset(text, m.index, 20, m[0].length, m[1] + ' ' + m[2]);
+                    findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: repl, rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
             }
 
