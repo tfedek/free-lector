@@ -173,7 +173,7 @@ const RuleEngine = (() => {
                     }
 
                     if (doBrackets) {
-                        const bracketErrors = scanBrackets(text, {});
+                        const bracketErrors = scanBrackets(text, { skipListMarkers: true });
                         for (const err of bracketErrors) {
                             const rationale = err.type === 'crossed' ? `Ukrštene zagrade: ${err.openChar}...${err.closeChar} u ćeliji.` : err.type === 'orphan_close' ? `Zatvorena ${err.closeChar} bez otvorene u ćeliji.` : `Otvorena ${err.openChar} bez zatvorene u ćeliji.`;
                             findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene/ukrštene zagrade u ćeliji]`, rationale, ruleId: 'unbalanced_brackets_table_cell', ...cm }));
@@ -295,7 +295,7 @@ const RuleEngine = (() => {
             }
 
             if (options.brackets) {
-                const bracketErrors = scanBrackets(text, {});
+                const bracketErrors = scanBrackets(text, { skipListMarkers: true });
                 const loc = el.type === 'header' ? 'zaglavlju' : 'podnožju';
                 for (const err of bracketErrors) {
                     const rationale = err.type === 'crossed' ? `Ukrštene zagrade: ${err.openChar}...${err.closeChar} u ${loc}.` : err.type === 'orphan_close' ? `Zatvorena ${err.closeChar} bez otvorene u ${loc}.` : `Otvorena ${err.openChar} bez zatvorene u ${loc}.`;
@@ -843,7 +843,7 @@ const RuleEngine = (() => {
             }
 
             if (options.brackets) {
-                const bracketErrors = scanBrackets(text, {});
+                const bracketErrors = scanBrackets(text, { skipListMarkers: true });
                 for (const err of bracketErrors) {
                     const rationale = err.type === 'crossed' ? `Ukrštene zagrade: ${err.openChar}...${err.closeChar} u ${noteType.toLowerCase()} ${note.id}.` : err.type === 'orphan_close' ? `Zatvorena ${err.closeChar} bez otvorene u ${noteType.toLowerCase()} ${note.id}.` : `Otvorena ${err.openChar} bez zatvorene u ${noteType.toLowerCase()} ${note.id}.`;
                     findings.push(makeFinding({ element: noteEl, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: text.substring(0, 50), replacement: `[neuparene/ukrštene zagrade u ${noteType.toLowerCase()}]`, rationale, ruleId: 'unbalanced_brackets_note' }));
@@ -1043,8 +1043,14 @@ const RuleEngine = (() => {
 
     function isListMarkerClose(text, closeIndex) {
         const lineStart = text.lastIndexOf('\n', closeIndex - 1) + 1;
-        const prefix = text.slice(lineStart, closeIndex);
-        return /^\s*(?:\d+|[IVXLCDM]+|\p{L})$/iu.test(prefix);
+        const token = text.slice(lineStart, closeIndex).trim();
+        if (!token) return false;
+        // Decimal number
+        if (/^\d+$/.test(token)) return true;
+        // Single Unicode letter (including decomposed combining marks)
+        if (/^\p{L}\p{M}*$/u.test(token)) return true;
+        // Valid Roman numeral 1-3999
+        return /^(?=[IVXLCDM]+$)M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/i.test(token) && token.length > 0;
     }
 
     function scanBrackets(text, opts) {
