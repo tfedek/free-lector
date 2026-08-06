@@ -161,7 +161,7 @@ const RuleEngine = (() => {
                         }
                         const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                         while ((m = nsa.exec(text)) !== null) {
-                            if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\/)) continue;
+                            if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
                             const ctx = getContext(text, m.index, 20);
                             findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
@@ -199,7 +199,7 @@ const RuleEngine = (() => {
 
                     // Per-cell: duplicate words
                     if (options.duplicates) {
-                        const allowedDups = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                        const allowedDups = new Set(['ha','da','ne','vrlo','još','baš','sve','sam','ni','to','što']);
                         const dupRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let dm;
                         while ((dm = dupRe.exec(text)) !== null) {
                             if (allowedDups.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
@@ -336,7 +336,7 @@ const RuleEngine = (() => {
 
             if (options.duplicates) {
                 const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu; let dm;
-                const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve','sam','ni','to','što']);
                 while ((dm = dupeRe.exec(text)) !== null) {
                     if (allowed.has(dm[1].toLowerCase()) || dm[1].length < 2) continue;
                     findings.push(makeFinding({ element: el, category: 'Duple reči', priority: 'OBAVEZNO', confidence: 0.95, original: dm[0], replacement: dm[1], rationale: `Ponovljena reč u ${loc}.`, autoFixable: true, ruleId: 'duplicate_words_header_footer' }));
@@ -373,43 +373,57 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const openChars = '([{'; const closeChars = ')]}';
         const names = {'(':'obla','[':'uglasta','{':'vitičasta'};
+        // Detect code-like paragraphs to skip curly braces
+        function isCodeLike(text) {
+            if (!text) return false;
+            // Lines that look like programming code
+            if (/^\s*(if|else|for|while|do|switch|case|try|catch|finally|function|const|let|var|return|class|import|export|def|public|private|protected|void|int|string|bool|async|await)\b/.test(text)) return true;
+            if (/^\s*[{}();]+\s*$/.test(text)) return true; // lone bracket lines
+            if (/^\s*(\/\/|#|\/\*)/.test(text)) return true; // comments
+            if (/\$\(.*\)\.|=>|->|\.then\(|\.catch\(|require\(|import\s+{/.test(text)) return true; // JS/TS patterns
+            if (/[{;]\s*$/.test(text) && /[=<>!&|+\-*/%]/.test(text)) return true; // assignment/expression ending with { or ;
+            return false;
+        }
         for (const el of docMap.elements) {
             if (!el.text || !el.text.trim()) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
             scannedCount++;
+            const text = el.text;
+            const codeLike = isCodeLike(text);
             // Stack-based: detects interleaving ([)] and premature closing
             const stack = [];
-            for (let i = 0; i < el.text.length; i++) {
-                const ch = el.text[i];
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
                 const openIdx = openChars.indexOf(ch);
                 const closeIdx = closeChars.indexOf(ch);
                 if (openIdx !== -1) {
                     stack.push({ char: ch, pos: i, type: openIdx });
                 } else if (closeIdx !== -1) {
                     if (stack.length === 0) {
-                        // Premature close - nothing to match
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
+                        // Skip curly braces in code-like paragraphs
+                        if (codeLike && (ch === '}' || ch === '{')) continue;
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
                     } else if (stack[stack.length-1].type !== closeIdx) {
-                        // Mismatched: e.g. ( then ]
                         const top = stack.pop();
                         const expected = closeChars[top.type];
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(el.text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.`, ruleId: 'unbalanced_brackets_body' }));
+                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.`, ruleId: 'unbalanced_brackets_body' }));
                     } else {
-                        stack.pop(); // Correct match
+                        stack.pop();
                     }
                 }
             }
-            // Remaining unclosed
+            // Remaining unclosed - skip curly braces in code
             for (const item of stack) {
+                if (codeLike && item.char === '{') continue;
                 const expected = closeChars[item.type];
-                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(el.text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.`, ruleId: 'unbalanced_brackets_body' }));
+                findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, item.pos, 40), replacement: `[dodati \u201e${expected}\u201c]`, rationale: `Otvorena ${names[item.char]||''} zagrada bez zatvorene.`, ruleId: 'unbalanced_brackets_body' }));
             }
             // ; where ) should be
             const sp = /\([^)]*;(?=[^(]*$)/g; let m;
-            while ((m = sp.exec(el.text)) !== null) {
-                const frag = el.text.substring(m.index);
+            while ((m = sp.exec(text)) !== null) {
+                const frag = text.substring(m.index);
                 if (frag.indexOf(')') === -1 || frag.indexOf(';') < frag.indexOf(')')) {
-                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(el.text, m.index, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.', ruleId: 'unbalanced_brackets_body' }));
+                    findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'PROVERITI', confidence: 0.75, original: getContext(text, m.index, 50), replacement: '[proveriti da li \u201e;\u201c treba da bude \u201e)\u201c]', rationale: 'Tačka-zarez unutar nezatvorene zagrade.', ruleId: 'unbalanced_brackets_body' }));
                 }
             }
         }
@@ -493,7 +507,7 @@ const RuleEngine = (() => {
             const sao = /([(\[{<«\u201E]) +/g;
             while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
-            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
+            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/) || c5.match(/[0-9a-fA-F]{2}:[0-9a-fA-F]/) || c5.match(/(site|inurl|filetype|intitle|intext|cache|link|info|related|define|w|r|m|ns|mc|wp|v|a|o|c|dc|cp|xsi|xsd|xml)\:/i)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
         }
         return { findings, scannedCount, skippedCount };
     }
@@ -550,7 +564,7 @@ const RuleEngine = (() => {
     // ==========================================
     function checkDuplicateWords(docMap) {
         const findings = []; let scannedCount = 0, skippedCount = 0;
-        const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+        const allowed = new Set(['ha','da','ne','vrlo','još','baš','sve','sam','ni','to','što']);
         for (const el of docMap.elements) {
             if (!el.text) { skippedCount++; continue; }
             if (el.type === 'table') { skippedCount++; continue; }
@@ -880,7 +894,7 @@ const RuleEngine = (() => {
 
             if (options.duplicates) {
                 const dupeRe = /(?<=\s|^)(\p{L}+)\s+\1(?=\s|[,.:;!?)\]\}]|$)/giu;
-                const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve']);
+                const allowedDupes = new Set(['ha','da','ne','vrlo','još','baš','sve','sam','ni','to','što']);
                 let md;
                 while ((md = dupeRe.exec(text)) !== null) {
                     if (allowedDupes.has(md[1].toLowerCase()) || md[1].length < 2) continue;
