@@ -77,6 +77,10 @@ async function createDocxZip(documentXml, extras = {}) {
     if (extras.vbaProject) zip.file('word/vbaProject.bin', 'fake macro content');
     if (extras.embedding) zip.file('word/embeddings/oleObject1.bin', 'fake embedding');
     if (extras.largeImage) zip.file('word/media/image1.png', Buffer.alloc(extras.largeImage));
+    // Support arbitrary path -> content entries
+    for (const [key, val] of Object.entries(extras)) {
+        if (key.includes('/') && typeof val === 'string') zip.file(key, val);
+    }
     return zip.generateAsync({ type: 'arraybuffer' });
 }
 
@@ -1468,6 +1472,70 @@ testAsync('formatLabel initializes parent level counter from start', async () =>
     if (el.numberingLabel) {
         assert(!el.numberingLabel.startsWith('0.'), 'Label should not start with 0., got: ' + el.numberingLabel);
     }
+});
+
+// ==========================================
+// OOXML Parser Hardening Phase 2
+// ==========================================
+section('\nOOXML Parser Hardening Phase 2:');
+
+testAsync('gridAfter increases columnCount', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:trPr><w:gridBefore w:val="1"/><w:gridAfter w:val="2"/></w:trPr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    const tbl = result.elements.find(e => e.type === 'table');
+    // gridBefore=1 + 1 cell + gridAfter=2 = 4
+    assert.strictEqual(tbl.columnCount, 4, 'columnCount should be 4 (1+1+2), got: ' + tbl.columnCount);
+});
+
+testAsync('gridAfter=2 with gridSpan=3 gives columnCount=5', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:trPr><w:gridAfter w:val="2"/></w:trPr><w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t>X</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    const tbl = result.elements.find(e => e.type === 'table');
+    assert.strictEqual(tbl.columnCount, 5, 'columnCount should be 5 (3+2), got: ' + tbl.columnCount);
+});
+
+testAsync('inline AlternateContent preserves runs with formatting', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:p><mc:AlternateContent><mc:Choice Requires="w"><w:r><w:rPr><w:b/></w:rPr><w:t>BOLD</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:t>PLAIN</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    const el = result.elements[0];
+    assert(el.text === 'BOLD', 'Should use Choice (w is supported), got: ' + el.text);
+    assert(el.runs.length >= 1, 'Should have runs');
+    assert(el.runs[0].text === 'BOLD', 'Run text should be BOLD');
+    assert(el.runs[0].bold === true, 'Run should be bold');
+});
+
+testAsync('inline AlternateContent fallback preserves runs', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><w:body><w:p><mc:AlternateContent><mc:Choice Requires="wps"><w:r><w:t>SHAPE</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:i/></w:rPr><w:t>FALLBACK</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    const el = result.elements[0];
+    assert(el.text === 'FALLBACK', 'Should use Fallback (wps unsupported), got: ' + el.text);
+    assert(el.runs.length >= 1, 'Should have runs');
+    assert(el.runs[0].italic === true, 'Fallback run should be italic');
+});
+
+testAsync('resolvePartTarget normalizes sub/../header1.xml', async () => {
+    // Build a DOCX with a rels file pointing to sub/../header1.xml
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:sectPr><w:headerReference w:type="default" r:id="rId1"/></w:sectPr><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`;
+    const relsXml = `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="sub/../header1.xml"/></Relationships>`;
+    const headerXml = `<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>HDR TEXT</w:t></w:r></w:p></w:hdr>`;
+    const buf = await createDocxZip(docXml, { 'word/_rels/document.xml.rels': relsXml, 'word/header1.xml': headerXml });
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    assert(result.headers.length >= 1, 'Header should be loaded via normalized path');
+    assert(result.headers[0].text.includes('HDR TEXT'), 'Header text should contain HDR TEXT');
+});
+
+testAsync('header with non-standard filename loaded correctly', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:sectPr><w:headerReference w:type="default" r:id="rId1"/></w:sectPr><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`;
+    const relsXml = `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="customHeader.xml"/></Relationships>`;
+    const headerXml = `<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>CUSTOM HDR</w:t></w:r></w:p></w:hdr>`;
+    const buf = await createDocxZip(docXml, { 'word/_rels/document.xml.rels': relsXml, 'word/customHeader.xml': headerXml });
+    const result = await DocumentParser.parse({ name: 't.docx', arrayBuffer: async()=>buf });
+    assert(result.headers.length >= 1, 'Custom-named header should be loaded');
+    assert(result.headers[0].text.includes('CUSTOM HDR'), 'Custom header text correct');
 });
 
 // ==========================================

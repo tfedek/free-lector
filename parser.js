@@ -141,47 +141,41 @@ const DocumentParser = (() => {
         let headers = [], footers = [];
         // Only load headers/footers actually referenced via w:headerReference/w:footerReference in document.xml
         const relsContent = await loadEntry('word/_rels/document.xml.rels');
-        const linkedParts = new Set();
+        const linkedParts = new Map(); // path -> 'header'|'footer'
         if (relsContent && docContent) {
-            // Parse document.xml with DOMParser to find header/footer references
             const docDom = parseXmlStrict(docContent, 'word/document.xml');
             const nsR = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-            const refIds = new Set();
-            // Find all headerReference and footerReference elements (any namespace)
+            const refMap = new Map(); // rid -> 'header'|'footer'
             const allElements = docDom.getElementsByTagName('*');
             for (let i = 0; i < allElements.length; i++) {
                 const el = allElements[i];
                 if (el.localName === 'headerReference' || el.localName === 'footerReference') {
                     const rid = el.getAttributeNS(nsR, 'id') || el.getAttribute('r:id') || '';
-                    if (rid) refIds.add(rid);
+                    if (rid) refMap.set(rid, el.localName === 'headerReference' ? 'header' : 'footer');
                 }
             }
-            // Parse rels XML with DOMParser
-            if (refIds.size > 0) {
+            if (refMap.size > 0) {
                 const relsDom = parseXmlStrict(relsContent, 'word/_rels/document.xml.rels');
                 const relNodes = relsDom.getElementsByTagName('Relationship');
                 for (let i = 0; i < relNodes.length; i++) {
                     const rel = relNodes[i];
                     const id = rel.getAttribute('Id') || '';
-                    let target = rel.getAttribute('Target') || '';
-                    if (refIds.has(id)) {
-                        // Normalize target path relative to word/
-                        target = target.replace(/^\.\//, '').replace(/^\.\.\/word\//, '');
-                        if (!target.startsWith('word/')) target = 'word/' + target;
-                        linkedParts.add(target);
+                    const target = rel.getAttribute('Target') || '';
+                    const targetMode = rel.getAttribute('TargetMode') || '';
+                    if (targetMode === 'External') continue;
+                    if (refMap.has(id)) {
+                        const resolved = resolvePartTarget('word/document.xml', target);
+                        if (resolved) linkedParts.set(resolved, refMap.get(id));
                     }
                 }
             }
         }
-        const hasLinkedParts = linkedParts.size > 0;
-        for (const path of Object.keys(zip.files)) {
-            if (path.match(/^word\/header\d+\.xml$/) && hasLinkedParts && linkedParts.has(path)) {
-                const c = await loadEntry(path);
-                if (c) headers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
-            }
-            if (path.match(/^word\/footer\d+\.xml$/) && hasLinkedParts && linkedParts.has(path)) {
-                const c = await loadEntry(path);
-                if (c) footers.push({ path, text: extractTextFromXml(c, path, parseXmlStrict) });
+        for (const [partPath, kind] of linkedParts) {
+            const c = await loadEntry(partPath);
+            if (c) {
+                const text = extractTextFromXml(c, partPath, parseXmlStrict);
+                if (kind === 'header') headers.push({ path: partPath, text });
+                else footers.push({ path: partPath, text });
             }
         }
 
@@ -574,8 +568,24 @@ const DocumentParser = (() => {
                 buildRuns(target, ns, runs);
             } else if (ln === 'del') {
                 if (trackedChangesMode === 'show_deleted') buildRuns(child, ns, runs);
+            } else if (ln === 'AlternateContent') {
+                const branch = selectAlternateContentBranch(child);
+                if (branch) buildRuns(branch, ns, runs);
             }
         }
+    }
+
+    function resolvePartTarget(sourcePart, target) {
+        if (!target) return null;
+        const base = sourcePart.includes('/') ? sourcePart.slice(0, sourcePart.lastIndexOf('/') + 1) : '';
+        const combined = target.startsWith('/') ? target.slice(1) : base + target;
+        const segments = [];
+        for (const segment of combined.split('/')) {
+            if (!segment || segment === '.') continue;
+            if (segment === '..') { if (segments.length) segments.pop(); continue; }
+            segments.push(segment);
+        }
+        return segments.join('/');
     }
 
     function getDirectChild(parent, nsUri, localName) {
@@ -626,6 +636,7 @@ const DocumentParser = (() => {
     // ==========================================
     function parseTable(tblNode, ns, tableIdx) {
         const rows = [];
+        const rowLogicalEnds = [];
         let hasActualHeader = false;
         let allCellTexts = [];
         let hasAnyNestedTable = false;
@@ -713,6 +724,7 @@ const DocumentParser = (() => {
                 });
                 logicalCol += gridSpan;
             }
+            rowLogicalEnds.push(logicalCol + rowGridAfter);
             rows.push(cells);
         }
 
@@ -746,8 +758,9 @@ const DocumentParser = (() => {
         // Link vMerge continuation cells to their restart cell
         // Compute maxCols from actual cell coordinates (accounts for gridBefore/gridAfter)
         let maxCols = 0;
-        for (const row of rows) {
-            for (const cell of row) {
+        for (let ri = 0; ri < rows.length; ri++) {
+            if (rowLogicalEnds[ri] > maxCols) maxCols = rowLogicalEnds[ri];
+            for (const cell of rows[ri]) {
                 const cellEnd = cell.columnIndex + (cell.gridSpan || 1);
                 if (cellEnd > maxCols) maxCols = cellEnd;
             }
