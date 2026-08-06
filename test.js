@@ -1418,6 +1418,59 @@ test('preset restore: basic toggle back gives basic', () => {
 });
 
 // ==========================================
+// OOXML Parser Hardening regression tests
+// ==========================================
+section('\nOOXML Parser Hardening:');
+
+testAsync('mc:AlternateContent uses Fallback when Choice requires unsupported ns', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><w:body><mc:AlternateContent><mc:Choice Requires="wps"><w:p><w:r><w:t>CHOICE</w:t></w:r></w:p></mc:Choice><mc:Fallback><w:p><w:r><w:t>FALLBACK</w:t></w:r></w:p></mc:Fallback></mc:AlternateContent></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    assert(result.elements.length >= 1, 'Should have at least one element');
+    assert(result.elements[0].text === 'FALLBACK', 'Should use Fallback when Choice ns unsupported, got: ' + result.elements[0].text);
+});
+
+testAsync('gridBefore offsets vMerge columnIndex correctly', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const tbl = result.elements.find(e => e.type === 'table');
+    assert(tbl, 'Table must exist');
+    assert(tbl.columnCount >= 2, 'columnCount must be >= 2 with gridBefore, got: ' + tbl.columnCount);
+    const cont = tbl.rows[1][0];
+    assert(cont.vMerge === 'continue', 'Second row cell should be continue');
+    assert(cont.vMergeOrigin, 'Continuation must have vMergeOrigin');
+});
+
+testAsync('ignore_deleted skips block-level del (no empty heading)', async () => {
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:del><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:delText>DELETED</w:delText></w:r></w:p></w:del><w:p><w:r><w:t>KEPT</w:t></w:r></w:p></w:body></w:document>`;
+    const buf = await createDocxZip(docXml);
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    // In default (accept/ignore_deleted) mode, deleted heading should not appear
+    const headings = result.elements.filter(e => e.type === 'heading');
+    assert.strictEqual(headings.length, 0, 'Deleted heading should not appear in accept mode');
+    assert(result.elements.some(e => e.text === 'KEPT'), 'KEPT paragraph must be present');
+});
+
+testAsync('formatLabel initializes parent level counter from start', async () => {
+    // Test: first element at ilvl=1 with lvlText="%1.%2." should not produce 0.1.
+    const docXml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Sub item</w:t></w:r></w:p></w:body></w:document>`;
+    const numbXml = `<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
+    const buf = await createDocxZip(docXml, { 'word/numbering.xml': numbXml });
+    const file = { name: 't.docx', arrayBuffer: async()=>buf };
+    const result = await DocumentParser.parse(file);
+    const el = result.elements.find(e => e.text && e.text.includes('Sub item'));
+    assert(el, 'Element must exist');
+    // numberingLabel should NOT start with "0."
+    if (el.numberingLabel) {
+        assert(!el.numberingLabel.startsWith('0.'), 'Label should not start with 0., got: ' + el.numberingLabel);
+    }
+});
+
+// ==========================================
 // SUMMARY - run async tests then report
 // ==========================================
 

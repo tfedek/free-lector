@@ -143,27 +143,35 @@ const DocumentParser = (() => {
         const relsContent = await loadEntry('word/_rels/document.xml.rels');
         const linkedParts = new Set();
         if (relsContent && docContent) {
-            // Step 1: Find r:id values from w:headerReference and w:footerReference in document.xml
+            // Parse document.xml with DOMParser to find header/footer references
+            const docDom = parseXmlStrict(docContent, 'word/document.xml');
+            const nsR = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
             const refIds = new Set();
-            const hdrRefMatches = docContent.match(/w:headerReference[^>]*r:id="([^"]+)"/gi) || [];
-            const ftrRefMatches = docContent.match(/w:footerReference[^>]*r:id="([^"]+)"/gi) || [];
-            for (const m of [...hdrRefMatches, ...ftrRefMatches]) {
-                const idMatch = m.match(/r:id="([^"]+)"/i);
-                if (idMatch) refIds.add(idMatch[1]);
+            // Find all headerReference and footerReference elements (any namespace)
+            const allElements = docDom.getElementsByTagName('*');
+            for (let i = 0; i < allElements.length; i++) {
+                const el = allElements[i];
+                if (el.localName === 'headerReference' || el.localName === 'footerReference') {
+                    const rid = el.getAttributeNS(nsR, 'id') || el.getAttribute('r:id') || '';
+                    if (rid) refIds.add(rid);
+                }
             }
-            // Step 2: Map r:id to Target in document.xml.rels
+            // Parse rels XML with DOMParser
             if (refIds.size > 0) {
-                const relEntries = relsContent.match(/<Relationship[^>]+>/gi) || [];
-                for (const rel of relEntries) {
-                    const idMatch = rel.match(/Id="([^"]+)"/i);
-                    const targetMatch = rel.match(/Target="([^"]+)"/i);
-                    if (idMatch && targetMatch && refIds.has(idMatch[1])) {
-                        linkedParts.add('word/' + targetMatch[1]);
+                const relsDom = parseXmlStrict(relsContent, 'word/_rels/document.xml.rels');
+                const relNodes = relsDom.getElementsByTagName('Relationship');
+                for (let i = 0; i < relNodes.length; i++) {
+                    const rel = relNodes[i];
+                    const id = rel.getAttribute('Id') || '';
+                    let target = rel.getAttribute('Target') || '';
+                    if (refIds.has(id)) {
+                        // Normalize target path relative to word/
+                        target = target.replace(/^\.\//, '').replace(/^\.\.\/word\//, '');
+                        if (!target.startsWith('word/')) target = 'word/' + target;
+                        linkedParts.add(target);
                     }
                 }
             }
-            // Fallback: if no w:headerReference found in doc, use rels directly (for compat)
-            // No fallback - only load headers/footers explicitly referenced via w:headerReference
         }
         const hasLinkedParts = linkedParts.size > 0;
         for (const path of Object.keys(zip.files)) {
@@ -297,14 +305,11 @@ const DocumentParser = (() => {
                     if (sdtContent) processBodyChildren(sdtContent);
                 } else if (ln === 'customXml' || ln === 'ins' || ln === 'del') {
                     // Block-level tracked changes and custom XML - recurse
-                    if (ln === 'del' && trackedChangesMode === 'accept') continue;
+                    if (ln === 'del' && trackedChangesMode !== 'show_deleted') continue;
                     processBodyChildren(child);
                 } else if (ln === 'AlternateContent') {
-                    // mc:AlternateContent - process Choice first, then Fallback
-                    const choice = getDirectChild(child, null, 'Choice');
-                    const fallback = getDirectChild(child, null, 'Fallback');
-                    if (choice) processBodyChildren(choice);
-                    else if (fallback) processBodyChildren(fallback);
+                    const branch = selectAlternateContentBranch(child);
+                    if (branch) processBodyChildren(branch);
                 }
             }
         }
@@ -522,6 +527,9 @@ const DocumentParser = (() => {
                 // 'accept' and 'ignore_deleted' both skip deleted text
             } else if (ln === 'pPr' || ln === 'rPr' || ln === 'sectPr' || ln === 'bookmarkStart' || ln === 'bookmarkEnd') {
                 // Skip non-text elements
+            } else if (ln === 'AlternateContent') {
+                const branch = selectAlternateContentBranch(child);
+                if (branch) text += extractVisibleText(branch, ns);
             } else if (child.children && child.children.length > 0) {
                 // Recurse into unknown containers
                 text += extractVisibleText(child, ns);
@@ -584,6 +592,34 @@ const DocumentParser = (() => {
         return node.getAttributeNS(nsW, name) || node.getAttribute(`w:${name}`) || null;
     }
 
+    // Supported namespaces for mc:Choice Requires resolution
+    const SUPPORTED_NS = new Set([
+        'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        'http://schemas.openxmlformats.org/drawingml/2006/main',
+        'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+    ]);
+
+    function selectAlternateContentBranch(acNode) {
+        // Select first mc:Choice whose Requires namespaces are all supported, else mc:Fallback
+        for (const child of acNode.children) {
+            if (child.localName === 'Choice') {
+                const requires = child.getAttribute('Requires') || '';
+                if (!requires) return child; // No requirements = always valid
+                const prefixes = requires.trim().split(/\s+/);
+                const allSupported = prefixes.every(prefix => {
+                    const uri = child.lookupNamespaceURI(prefix);
+                    return uri && SUPPORTED_NS.has(uri);
+                });
+                if (allSupported) return child;
+            }
+        }
+        // No supported Choice found - use Fallback
+        for (const child of acNode.children) {
+            if (child.localName === 'Fallback') return child;
+        }
+        return null;
+    }
+
 
     // ==========================================
     // TABLE PARSING - gridSpan, vMerge, recursive nested tables
@@ -602,11 +638,17 @@ const DocumentParser = (() => {
             const cells = [];
             let logicalCol = 0;
             // gridBefore: skip columns at start of row
+            let rowGridBefore = 0;
+            let rowGridAfter = 0;
             if (trPr) {
                 const gridBeforeNode = getDirectChild(trPr, ns.w, 'gridBefore');
                 if (gridBeforeNode) {
-                    const gb = parseInt(getWAttr(gridBeforeNode, 'val'), 10) || 0;
-                    logicalCol = gb;
+                    rowGridBefore = parseInt(getWAttr(gridBeforeNode, 'val'), 10) || 0;
+                    logicalCol = rowGridBefore;
+                }
+                const gridAfterNode = getDirectChild(trPr, ns.w, 'gridAfter');
+                if (gridAfterNode) {
+                    rowGridAfter = parseInt(getWAttr(gridAfterNode, 'val'), 10) || 0;
                 }
             }
             for (const tcChild of child.children) {
@@ -649,7 +691,10 @@ const DocumentParser = (() => {
                         } else if (tcContent.localName === 'customXml' || tcContent.localName === 'ins') {
                             processCellContent(tcContent);
                         } else if (tcContent.localName === 'del') {
-                            if (trackedChangesMode !== 'accept') processCellContent(tcContent);
+                            if (trackedChangesMode === 'show_deleted') processCellContent(tcContent);
+                        } else if (tcContent.localName === 'AlternateContent') {
+                            const branch = selectAlternateContentBranch(tcContent);
+                            if (branch) processCellContent(branch);
                         }
                     }
                 }
@@ -699,7 +744,14 @@ const DocumentParser = (() => {
         }
 
         // Link vMerge continuation cells to their restart cell
-        const maxCols = rows.length > 0 ? Math.max(...rows.map(r => r.reduce((s,c) => s + (c.gridSpan||1), 0))) : 0;
+        // Compute maxCols from actual cell coordinates (accounts for gridBefore/gridAfter)
+        let maxCols = 0;
+        for (const row of rows) {
+            for (const cell of row) {
+                const cellEnd = cell.columnIndex + (cell.gridSpan || 1);
+                if (cellEnd > maxCols) maxCols = cellEnd;
+            }
+        }
         for (let ci = 0; ci < maxCols; ci++) {
             let restartRow = null;
             let restartCell = null;
@@ -723,7 +775,7 @@ const DocumentParser = (() => {
             type: 'table', index: tableIdx, tableId, rows,
             text: rows.map(r => r.map(c => c.text).join(' | ')).join('\n'),
             hasHeader: hasActualHeader,
-            columnCount: rows.length > 0 ? Math.max(...rows.map(row => row.reduce((s,c) => s + (c.gridSpan||1), 0))) : 0,
+            columnCount: maxCols,
             rowCount: rows.length,
             hasNestedTables: hasAnyNestedTable,
             hasMergedCells: rows.some(r => r.some(c => c.gridSpan > 1 || c.vMerge)),
@@ -809,7 +861,14 @@ const DocumentParser = (() => {
         for (let lvl = 0; lvl <= 8; lvl++) {
             const placeholder = `%${lvl + 1}`;
             if (!label.includes(placeholder)) continue;
-            const counter = counters[lvl] || 0;
+            // Use counter if set; otherwise use start value from level definition
+            let counter = counters[lvl] || 0;
+            if (counter === 0 && levelDefinitions && levelDefinitions[lvl]) {
+                const lvlStart = lvlOverrides && lvlOverrides[lvl] && lvlOverrides[lvl].startOverride != null
+                    ? lvlOverrides[lvl].startOverride
+                    : (levelDefinitions[lvl].start || 1);
+                counter = lvlStart;
+            }
             // Use lvlOverride definition if available, then base level definition
             let lvlDef = levelDefinitions ? levelDefinitions[lvl] : null;
             if (lvlOverrides && lvlOverrides[lvl] && lvlOverrides[lvl].lvlDef) {
