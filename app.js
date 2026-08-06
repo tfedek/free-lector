@@ -427,12 +427,18 @@
     resetBtn.addEventListener('click', resetState);
     function resetState() {
         currentFile = null; currentDocMap = null; currentAuditJson = null;
-        auditInProgress = false; runBtn.disabled = false; runBtn.textContent = 'Pokreni audit';
+        auditInProgress = false; auditGeneration++; runBtn.disabled = false; runBtn.textContent = 'Pokreni audit';
         fileInput.value = ''; fileInfo.classList.add('hidden');
         dropZone.classList.remove('hidden'); optionsPanel.classList.add('hidden');
         progressSection.classList.add('hidden'); resultsSection.classList.add('hidden');
         document.getElementById('upload-section').classList.remove('hidden');
         progressFill.style.width = '0%'; progressFill.style.background = '';
+        // Reset filters
+        filterPriority.value = 'all';
+        filterCategory.value = 'all';
+        filterSection.value = 'all';
+        if (filterStatus) filterStatus.value = 'all';
+        if (filterAutofix) filterAutofix.checked = false;
     }
 
     // ==========================================
