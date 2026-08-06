@@ -301,6 +301,79 @@ test('report includes bootstrap note', () => {
 });
 
 // ==========================================
+// McNEMAR, FDR, CLIFF'S DELTA TESTS
+// ==========================================
+
+console.log('\nMcNemar test:');
+test('McNemar detects significant improvement', () => {
+    const { mcNemar } = require('../evaluation/evaluate-confidence.js');
+    // 20 cases where before was wrong and after is right, 2 vice versa
+    const paired = [];
+    for (let i = 0; i < 20; i++) paired.push({before: 0, after: 1});
+    for (let i = 0; i < 2; i++) paired.push({before: 1, after: 0});
+    for (let i = 0; i < 78; i++) paired.push({before: 1, after: 1});
+    const result = mcNemar(paired);
+    assert(result.significant, 'Should be significant: 20 improvements vs 2 regressions');
+    assert(result.c === 20, 'c (improvements) should be 20');
+    assert(result.b === 2, 'b (regressions) should be 2');
+});
+
+test('McNemar not significant when no change', () => {
+    const { mcNemar } = require('../evaluation/evaluate-confidence.js');
+    const paired = [];
+    for (let i = 0; i < 5; i++) paired.push({before: 0, after: 1});
+    for (let i = 0; i < 5; i++) paired.push({before: 1, after: 0});
+    for (let i = 0; i < 90; i++) paired.push({before: 1, after: 1});
+    const result = mcNemar(paired);
+    assert(!result.significant, 'Should NOT be significant: equal improvements and regressions');
+});
+
+console.log('\nFDR (Benjamini-Hochberg):');
+test('FDR controls false discoveries', () => {
+    const { benjaminiHochberg } = require('../evaluation/evaluate-confidence.js');
+    const pValues = [
+        {rule_id: 'a', pValue: 0.001},
+        {rule_id: 'b', pValue: 0.01},
+        {rule_id: 'c', pValue: 0.04},
+        {rule_id: 'd', pValue: 0.06},
+        {rule_id: 'e', pValue: 0.5},
+    ];
+    const results = benjaminiHochberg(pValues, 0.05);
+    const sig = results.filter(r => r.significant);
+    assert(sig.length >= 2, 'At least a and b should be significant');
+    assert(!results.find(r => r.rule_id === 'e').significant, 'e (p=0.5) should not be significant');
+});
+
+console.log('\nCliff\'s delta:');
+test('Cliff delta: clear superiority', () => {
+    const { cliffsDelta } = require('../evaluation/evaluate-confidence.js');
+    const group1 = [10, 11, 12, 13, 14]; // all higher
+    const group2 = [1, 2, 3, 4, 5];      // all lower
+    const result = cliffsDelta(group1, group2);
+    assert.strictEqual(result.delta, 1.0, 'Delta should be 1.0 (complete superiority)');
+    assert.strictEqual(result.magnitude, 'large');
+});
+
+test('Cliff delta: no difference', () => {
+    const { cliffsDelta } = require('../evaluation/evaluate-confidence.js');
+    const group1 = [1, 2, 3, 4, 5];
+    const group2 = [1, 2, 3, 4, 5];
+    const result = cliffsDelta(group1, group2);
+    assert.strictEqual(result.delta, 0, 'Delta should be 0 (identical)');
+    assert.strictEqual(result.magnitude, 'negligible');
+});
+
+console.log('\nBootstrap BCa:');
+test('Bootstrap BCa returns valid interval', () => {
+    const { bootstrapBCa } = require('../evaluation/evaluate-confidence.js');
+    const data = [1,1,1,1,1,1,1,1,0,0]; // 80% success rate
+    const result = bootstrapBCa(data, d => d.filter(x=>x===1).length / d.length, 2000, 0.05);
+    assert(result.lower >= 0.1 && result.lower <= 0.8, 'Lower bound should be reasonable: ' + result.lower);
+    assert(result.upper >= 0.8 && result.upper <= 1.0, 'Upper bound should be reasonable: ' + result.upper);
+    assert(result.lower < result.upper, 'Lower must be less than upper');
+});
+
+// ==========================================
 // SUMMARY
 // ==========================================
 console.log('\n' + '='.repeat(40));

@@ -353,9 +353,167 @@ function run() {
     console.log(`\nReports saved: ${jsonPath}, ${mdPath}`);
 }
 
+// ==========================================
+// McNEMAR TEST - paired comparison of two rule versions
+// ==========================================
+function mcNemar(pairedResults) {
+    // pairedResults: array of {before: 0|1, after: 0|1}
+    // b = before correct, after wrong; c = before wrong, after correct
+    let b = 0, c = 0;
+    for (const p of pairedResults) {
+        if (p.before === 1 && p.after === 0) b++;
+        if (p.before === 0 && p.after === 1) c++;
+    }
+    const n = b + c;
+    if (n === 0) return { chi2: 0, pValue: 1, b, c, n: pairedResults.length, significant: false };
+    // McNemar chi-squared with continuity correction
+    const chi2 = Math.pow(Math.abs(b - c) - 1, 2) / (b + c);
+    // Approximate p-value from chi2 with 1 df using normal approximation
+    const z = Math.sqrt(chi2);
+    const pValue = 2 * (1 - normalCDF(z));
+    return { chi2, pValue, b, c, n: pairedResults.length, significant: pValue < 0.05 };
+}
+
+function normalCDF(x) {
+    const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
+    const p = 0.3275911;
+    const sign = x < 0 ? -1 : 1;
+    x = Math.abs(x) / Math.sqrt(2);
+    const t = 1.0 / (1.0 + p * x);
+    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+    return 0.5 * (1.0 + sign * y);
+}
+
+// ==========================================
+// FDR (Benjamini-Hochberg) - controls false discovery rate
+// ==========================================
+function benjaminiHochberg(pValues, alpha) {
+    // pValues: array of {rule_id, pValue}
+    // Returns array with {rule_id, pValue, rank, critical, significant}
+    alpha = alpha || 0.05;
+    const sorted = pValues.slice().sort((a, b) => a.pValue - b.pValue);
+    const m = sorted.length;
+    const results = [];
+    let lastSignificant = -1;
+    for (let i = 0; i < m; i++) {
+        const rank = i + 1;
+        const critical = (rank / m) * alpha;
+        if (sorted[i].pValue <= critical) lastSignificant = i;
+        results.push({ ...sorted[i], rank, critical, significant: false });
+    }
+    // All up to lastSignificant are significant
+    for (let i = 0; i <= lastSignificant; i++) {
+        results[i].significant = true;
+    }
+    return results;
+}
+
+// ==========================================
+// CLIFF'S DELTA - non-parametric effect size
+// ==========================================
+function cliffsDelta(group1, group2) {
+    // group1, group2: arrays of numeric values
+    // Returns delta in [-1, 1] and magnitude
+    let more = 0, less = 0;
+    for (const x of group1) {
+        for (const y of group2) {
+            if (x > y) more++;
+            else if (x < y) less++;
+        }
+    }
+    const n = group1.length * group2.length;
+    if (n === 0) return { delta: 0, magnitude: 'negligible' };
+    const delta = (more - less) / n;
+    const absDelta = Math.abs(delta);
+    let magnitude;
+    if (absDelta < 0.147) magnitude = 'negligible';
+    else if (absDelta < 0.33) magnitude = 'small';
+    else if (absDelta < 0.474) magnitude = 'medium';
+    else magnitude = 'large';
+    return { delta, magnitude };
+}
+
+// ==========================================
+// BOOTSTRAP BCa INTERVAL
+// ==========================================
+function bootstrapBCa(data, statFn, B, alpha) {
+    B = B || 10000;
+    alpha = alpha || 0.05;
+    const n = data.length;
+    if (n === 0) return { lower: 0, upper: 0, center: 0 };
+    const observed = statFn(data);
+    // Bootstrap resamples
+    const bootStats = [];
+    for (let i = 0; i < B; i++) {
+        const sample = [];
+        for (let j = 0; j < n; j++) sample.push(data[Math.floor(Math.random() * n)]);
+        bootStats.push(statFn(sample));
+    }
+    bootStats.sort((a, b) => a - b);
+    // Bias correction (z0)
+    const below = bootStats.filter(s => s < observed).length;
+    const z0 = normalInv(below / B);
+    // Acceleration (a) via jackknife
+    const jackValues = [];
+    for (let i = 0; i < n; i++) {
+        const jack = data.filter((_, j) => j !== i);
+        jackValues.push(statFn(jack));
+    }
+    const jackMean = jackValues.reduce((s, v) => s + v, 0) / n;
+    const num = jackValues.reduce((s, v) => s + Math.pow(jackMean - v, 3), 0);
+    const den = jackValues.reduce((s, v) => s + Math.pow(jackMean - v, 2), 0);
+    const a = den === 0 ? 0 : num / (6 * Math.pow(den, 1.5));
+    // Adjusted percentiles
+    const zAlpha = normalInv(alpha / 2);
+    const zUpper = normalInv(1 - alpha / 2);
+    const adjLower = normalCDF(z0 + (z0 + zAlpha) / (1 - a * (z0 + zAlpha)));
+    const adjUpper = normalCDF(z0 + (z0 + zUpper) / (1 - a * (z0 + zUpper)));
+    const lower = bootStats[Math.max(0, Math.floor(adjLower * B))] || bootStats[0];
+    const upper = bootStats[Math.min(B - 1, Math.floor(adjUpper * B))] || bootStats[B - 1];
+    return { lower, upper, center: observed };
+}
+
+function normalInv(p) {
+    // Rational approximation for inverse normal CDF
+    if (p <= 0) return -Infinity;
+    if (p >= 1) return Infinity;
+    if (p === 0.5) return 0;
+    const a = [
+        -3.969683028665376e+01, 2.209460984245205e+02,
+        -2.759285104469687e+02, 1.383577518672690e+02,
+        -3.066479806614716e+01, 2.506628277459239e+00
+    ];
+    const b = [
+        -5.447609879822406e+01, 1.615858368580409e+02,
+        -1.556989798598866e+02, 6.680131188771972e+01,
+        -1.328068155288572e+01
+    ];
+    const c = [
+        -7.784894002430293e-03, -3.223964580411365e-01,
+        -2.400758277161838e+00, -2.549732539343734e+00,
+        4.374664141464968e+00, 2.938163982698783e+00
+    ];
+    const d = [
+        7.784695709041462e-03, 3.224671290700398e-01,
+        2.445134137142996e+00, 3.754408661907416e+00
+    ];
+    const pLow = 0.02425, pHigh = 1 - pLow;
+    let q, r;
+    if (p < pLow) {
+        q = Math.sqrt(-2 * Math.log(p));
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    } else if (p <= pHigh) {
+        q = p - 0.5; r = q * q;
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+    } else {
+        q = Math.sqrt(-2 * Math.log(1 - p));
+        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+}
+
 // Export for testing
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { parseCSV, splitCSVLine, wilsonCI, run };
+    module.exports = { parseCSV, splitCSVLine, wilsonCI, mcNemar, benjaminiHochberg, cliffsDelta, bootstrapBCa, run };
 }
 
 // Run if called directly

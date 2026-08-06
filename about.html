@@ -114,6 +114,18 @@
         <h3>Sample size (Cochran formula)</h3>
         <p>Cochran-ova formula određuje minimalni broj obeleženih nalaza potreban za statistički validnu procenu. Podržava design effect za korelaciju unutar istog dokumenta (nalazi u jednom dokumentu nisu nezavisni).</p>
         <p>Primer: za marginu greške 5% i confidence 95%, sa p=0.5 i design effect 1, potrebno je oko 385 obeleženih nalaza.</p>
+
+        <h3>McNemar test</h3>
+        <p>Upareno poređenje dve verzije pravila na istim dokumentima. Kad promenimo pravilo, McNemar test kaže da li je poboljšanje statistički značajno ili je moglo nastati slučajno. Koristi se jer su podaci upareni - isti dokumenti se proveravaju pre i posle promene.</p>
+
+        <h3>FDR (Benjamini-Hochberg)</h3>
+        <p>Kontrola lažnih otkrića pri simultanom testiranju više pravila. Kad istovremeno procenjujemo tačnost 10+ pravila, neka će slučajno izgledati dobro ili loše. FDR korekcija kontroliše procenat lažno pozitivnih zaključaka o samim pravilima.</p>
+
+        <h3>Cliff's delta</h3>
+        <p>Neparametarska mera veličine efekta. Umesto samo "da li je razlika značajna", Cliff's delta kaže koliko je jedna verzija pravila superiorna nad drugom. Vrednost 1.0 znači potpunu superiornost, 0.0 znači da su identične. Intuitivnije od p-vrednosti za donošenje odluka o promenama.</p>
+
+        <h3>Bootstrap BCa interval</h3>
+        <p>Bias-corrected and accelerated bootstrap daje preciznije intervale pouzdanosti od običnog bootstrap-a kada je distribucija asimetrična (što je slučaj za precision vrednosti blizu 100%).</p>
     </div>
 
     <footer class="site-footer">
