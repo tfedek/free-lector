@@ -404,11 +404,11 @@
     // ==========================================
     // FILTERS
     // ==========================================
-    filterPriority.addEventListener('change', () => renderTable(currentAuditJson.findings));
-    filterCategory.addEventListener('change', () => renderTable(currentAuditJson.findings));
-    filterSection.addEventListener('change', () => renderTable(currentAuditJson.findings));
-    if (filterAutofix) filterAutofix.addEventListener('change', () => renderTable(currentAuditJson.findings));
-    if (filterStatus) filterStatus.addEventListener('change', () => renderTable(currentAuditJson.findings));
+    filterPriority.addEventListener('change', () => { if (currentAuditJson) renderTable(currentAuditJson.findings); });
+    filterCategory.addEventListener('change', () => { if (currentAuditJson) renderTable(currentAuditJson.findings); });
+    filterSection.addEventListener('change', () => { if (currentAuditJson) renderTable(currentAuditJson.findings); });
+    if (filterAutofix) filterAutofix.addEventListener('change', () => { if (currentAuditJson) renderTable(currentAuditJson.findings); });
+    if (filterStatus) filterStatus.addEventListener('change', () => { if (currentAuditJson) renderTable(currentAuditJson.findings); });
 
     // ==========================================
     // EXPORT

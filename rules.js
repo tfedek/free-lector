@@ -161,7 +161,7 @@ const RuleEngine = (() => {
                         }
                         const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                         while ((m = nsa.exec(text)) !== null) {
-                            if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
+                            if (text.substring(Math.max(0, m.index-10), m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
                             const ctx = getContext(text, m.index, 20);
                             findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ćeliji.`, autoFixable: true, ruleId: 'spacing_table_cell', ...cm }));
                         }
@@ -507,7 +507,7 @@ const RuleEngine = (() => {
             const sao = /([(\[{<«\u201E]) +/g;
             while ((m = sao.exec(text)) !== null) { const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'PREPORUKA', confidence: 0.90, original: ctx, replacement: ctx.replace(/([(\[{<«\u201E]) +/, '$1'), rationale: 'Razmak posle otvorene zagrade.', autoFixable: true, ruleId: 'spacing_body' })); }
             const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
-            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/) || c5.match(/[0-9a-fA-F]{2}:[0-9a-fA-F]/) || c5.match(/(site|inurl|filetype|intitle|intext|cache|link|info|related|define|w|r|m|ns|mc|wp|v|a|o|c|dc|cp|xsi|xsd|xml)\:/i)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
+            while ((m = nsa.exec(text)) !== null) { const c5 = text.substring(Math.max(0,m.index-10),m.index+10); if (c5.match(/https?:/) || c5.match(/\w:\\/) || c5.match(/[0-9a-fA-F]{2}:[0-9a-fA-F]/) || c5.match(/(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define|w|r|m|ns|mc|wp|v|a|o|c|dc|cp|xsi|xsd|xml)\:/i)) continue; const ctx = getContext(text, m.index, 20); findings.push(makeFinding({ element: el, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c.`, autoFixable: true, ruleId: 'spacing_body' })); }
         }
         return { findings, scannedCount, skippedCount };
     }

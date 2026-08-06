@@ -202,8 +202,8 @@ const Exporter = (() => {
             'Napomena'
         ];
         const findingsRows = auditJson.findings.map((f, i) => [
-            i + 1, f.id, f.section, f.paragraphId, f.category, f.priority,
-            f.confidence, f.original, f.replacement, f.rationale,
+            i + 1, f.id, xlsSafe(f.section), f.paragraphId, f.category, f.priority,
+            f.confidence, xlsSafe(f.original), xlsSafe(f.replacement), xlsSafe(f.rationale),
             f.isDirectQuote ? 'Da' : 'Ne',
             f.requiresSourceVerification ? 'Da' : 'Ne',
             f.autoFixable ? 'Da' : 'Ne',
@@ -391,6 +391,11 @@ const Exporter = (() => {
         a.href = url; a.download = fileName;
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    function xlsSafe(v) {
+        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return "'" + v;
+        return v;
     }
 
     function escMd(str) {
