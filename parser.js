@@ -99,7 +99,12 @@ const DocumentParser = (() => {
             if (bytes.length > MAX_SINGLE_XML_SIZE) {
                 throw new Error(`${path} prelazi ${MAX_SINGLE_XML_SIZE} bajtova.`);
             }
-            return new TextDecoder('utf-8').decode(bytes);
+            // BOM detection for encoding
+            let encoding = 'utf-8';
+            if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) encoding = 'utf-16le';
+            else if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) encoding = 'utf-16be';
+            else if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) encoding = 'utf-8';
+            return new TextDecoder(encoding).decode(bytes);
         }
 
         const contentTypesXml = await loadEntry('[Content_Types].xml');
@@ -294,6 +299,12 @@ const DocumentParser = (() => {
                     // Block-level tracked changes and custom XML - recurse
                     if (ln === 'del' && trackedChangesMode === 'accept') continue;
                     processBodyChildren(child);
+                } else if (ln === 'AlternateContent') {
+                    // mc:AlternateContent - process Choice first, then Fallback
+                    const choice = getDirectChild(child, null, 'Choice');
+                    const fallback = getDirectChild(child, null, 'Fallback');
+                    if (choice) processBodyChildren(choice);
+                    else if (fallback) processBodyChildren(fallback);
                 }
             }
         }
@@ -324,15 +335,15 @@ const DocumentParser = (() => {
 
         if (pPr) {
             const pStyle = getDirectChild(pPr, ns.w, 'pStyle');
-            if (pStyle) styleName = pStyle.getAttribute('w:val') || 'Normal';
+            if (pStyle) styleName = getWAttr(pStyle, 'val') || 'Normal';
             const outlineLvl = getDirectChild(pPr, ns.w, 'outlineLvl');
-            if (outlineLvl) outlineLevel = parseInt(outlineLvl.getAttribute('w:val'), 10);
+            if (outlineLvl) outlineLevel = parseInt(getWAttr(outlineLvl, 'val'), 10);
             const numPr = getDirectChild(pPr, ns.w, 'numPr');
             if (numPr) {
                 const ilvl = getDirectChild(numPr, ns.w, 'ilvl');
                 const nId = getDirectChild(numPr, ns.w, 'numId');
-                if (ilvl) numLevel = parseInt(ilvl.getAttribute('w:val'), 10);
-                if (nId) numId = nId.getAttribute('w:val');
+                if (ilvl) numLevel = parseInt(getWAttr(ilvl, 'val'), 10);
+                if (nId) numId = getWAttr(nId, 'val');
             }
             // Inherit numbering from style (including basedOn chain)
             if (!numId && styles._numFromStyle && styles._numFromStyle[styleName]) {
@@ -567,6 +578,12 @@ const DocumentParser = (() => {
         return null;
     }
 
+    function getWAttr(node, name) {
+        // Namespace-aware attribute reading: try NS first, then literal prefix
+        const nsW = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        return node.getAttributeNS(nsW, name) || node.getAttribute(`w:${name}`) || null;
+    }
+
 
     // ==========================================
     // TABLE PARSING - gridSpan, vMerge, recursive nested tables
@@ -584,6 +601,14 @@ const DocumentParser = (() => {
 
             const cells = [];
             let logicalCol = 0;
+            // gridBefore: skip columns at start of row
+            if (trPr) {
+                const gridBeforeNode = getDirectChild(trPr, ns.w, 'gridBefore');
+                if (gridBeforeNode) {
+                    const gb = parseInt(getWAttr(gridBeforeNode, 'val'), 10) || 0;
+                    logicalCol = gb;
+                }
+            }
             for (const tcChild of child.children) {
                 if (tcChild.localName !== 'tc') continue;
 
@@ -593,9 +618,9 @@ const DocumentParser = (() => {
                 let vMergeType = null;
                 if (tcPr) {
                     const gsNode = getDirectChild(tcPr, ns.w, 'gridSpan');
-                    if (gsNode) gridSpan = parseInt(gsNode.getAttribute('w:val'), 10) || 1;
+                    if (gsNode) gridSpan = parseInt(getWAttr(gsNode, 'val'), 10) || 1;
                     const vmNode = getDirectChild(tcPr, ns.w, 'vMerge');
-                    if (vmNode) vMergeType = vmNode.getAttribute('w:val') || 'continue';
+                    if (vmNode) vMergeType = getWAttr(vmNode, 'val') || 'continue';
                 }
 
                 // Extract cell content
@@ -727,32 +752,32 @@ const DocumentParser = (() => {
 
         const abstractNumNodes = doc.getElementsByTagNameNS(ns, 'abstractNum');
         for (const an of abstractNumNodes) {
-            const abstractNumId = an.getAttribute('w:abstractNumId');
+            const abstractNumId = getWAttr(an, 'abstractNumId');
             const levels = {};
             const lvlNodes = an.getElementsByTagNameNS(ns, 'lvl');
             for (const lvl of lvlNodes) {
-                levels[parseInt(lvl.getAttribute('w:ilvl'), 10)] = parseLvlNode(lvl, ns);
+                levels[parseInt(getWAttr(lvl, 'ilvl'), 10)] = parseLvlNode(lvl, ns);
             }
             result.abstractNums[abstractNumId] = { levels };
         }
 
         const numNodes = doc.getElementsByTagNameNS(ns, 'num');
         for (const num of numNodes) {
-            const numId = num.getAttribute('w:numId');
+            const numId = getWAttr(num, 'numId');
             const abstractNumIdRef = num.getElementsByTagNameNS(ns, 'abstractNumId')[0];
             const entry = {
-                abstractNumId: abstractNumIdRef ? abstractNumIdRef.getAttribute('w:val') : null,
+                abstractNumId: abstractNumIdRef ? getWAttr(abstractNumIdRef, 'val') : null,
                 lvlOverrides: {},
             };
             // Parse lvlOverride with full w:lvl support
             const ovNodes = num.getElementsByTagNameNS(ns, 'lvlOverride');
             for (const ov of ovNodes) {
-                const ilvl = parseInt(ov.getAttribute('w:ilvl'), 10);
+                const ilvl = parseInt(getWAttr(ov, 'ilvl'), 10);
                 const startOverrideNode = ov.getElementsByTagNameNS(ns, 'startOverride')[0];
                 const lvlNode = ov.getElementsByTagNameNS(ns, 'lvl')[0];
                 entry.lvlOverrides[ilvl] = {
                     startOverride: startOverrideNode
-                        ? parseInt(startOverrideNode.getAttribute('w:val'), 10) : null,
+                        ? parseInt(getWAttr(startOverrideNode, 'val'), 10) : null,
                     lvlDef: lvlNode ? parseLvlNode(lvlNode, ns) : null,
                 };
             }
@@ -767,10 +792,10 @@ const DocumentParser = (() => {
         const lvlTextNode = lvl.getElementsByTagNameNS(ns, 'lvlText')[0];
         const lvlRestartNode = lvl.getElementsByTagNameNS(ns, 'lvlRestart')[0];
         return {
-            start: startNode ? parseInt(startNode.getAttribute('w:val'), 10) : null,
-            numFmt: numFmtNode ? numFmtNode.getAttribute('w:val') : 'decimal',
-            lvlText: lvlTextNode ? lvlTextNode.getAttribute('w:val') : '%1.',
-            lvlRestart: lvlRestartNode ? parseInt(lvlRestartNode.getAttribute('w:val'), 10) : null,
+            start: startNode ? parseInt(getWAttr(startNode, 'val'), 10) : null,
+            numFmt: numFmtNode ? getWAttr(numFmtNode, 'val') : 'decimal',
+            lvlText: lvlTextNode ? getWAttr(lvlTextNode, 'val') : '%1.',
+            lvlRestart: lvlRestartNode ? parseInt(getWAttr(lvlRestartNode, 'val'), 10) : null,
         };
     }
 
@@ -856,21 +881,21 @@ const DocumentParser = (() => {
         const styleNodes = doc.getElementsByTagNameNS(ns, 'style');
 
         for (const s of styleNodes) {
-            const id = s.getAttribute('w:styleId');
+            const id = getWAttr(s, 'styleId');
             const nameNode = s.getElementsByTagNameNS(ns, 'name')[0];
-            if (id && nameNode) styles[id] = nameNode.getAttribute('w:val');
+            if (id && nameNode) styles[id] = getWAttr(nameNode, 'val');
 
             // Track outlineLvl from style definition
             const pPrStyle = s.getElementsByTagNameNS(ns, 'pPr')[0];
             if (pPrStyle && id) {
                 const olvl = pPrStyle.getElementsByTagNameNS(ns, 'outlineLvl')[0];
-                if (olvl) styles._outlineLevels[id] = parseInt(olvl.getAttribute('w:val'), 10);
+                if (olvl) styles._outlineLevels[id] = parseInt(getWAttr(olvl, 'val'), 10);
             }
 
             // Track basedOn relationships
             const basedOnNode = s.getElementsByTagNameNS(ns, 'basedOn')[0];
             if (basedOnNode && id) {
-                styles._basedOn[id] = basedOnNode.getAttribute('w:val');
+                styles._basedOn[id] = getWAttr(basedOnNode, 'val');
             }
 
             // Direct numbering from style
@@ -882,8 +907,8 @@ const DocumentParser = (() => {
                     const ilvlNode = numPr.getElementsByTagNameNS(ns, 'ilvl')[0];
                     if (numIdNode) {
                         styles._numFromStyle[id] = {
-                            numId: numIdNode.getAttribute('w:val'),
-                            ilvl: ilvlNode ? parseInt(ilvlNode.getAttribute('w:val'), 10) : 0,
+                            numId: getWAttr(numIdNode, 'val'),
+                            ilvl: ilvlNode ? parseInt(getWAttr(ilvlNode, 'val'), 10) : 0,
                         };
                     }
                 }
@@ -923,8 +948,8 @@ const DocumentParser = (() => {
         const footnotes = [];
         const fnNodes = doc.getElementsByTagNameNS(ns, 'footnote');
         for (const fn of fnNodes) {
-            const id = fn.getAttribute('w:id');
-            const type = fn.getAttribute('w:type');
+            const id = getWAttr(fn, 'id');
+            const type = getWAttr(fn, 'type');
             if (type === 'separator' || type === 'continuationSeparator') continue;
             const text = extractTextFromXmlNode(fn, ns);
             footnotes.push({ id, text, isEmpty: text.trim().length === 0 });
@@ -938,8 +963,8 @@ const DocumentParser = (() => {
         const endnotes = [];
         const enNodes = doc.getElementsByTagNameNS(ns, 'endnote');
         for (const en of enNodes) {
-            const id = en.getAttribute('w:id');
-            const type = en.getAttribute('w:type');
+            const id = getWAttr(en, 'id');
+            const type = getWAttr(en, 'type');
             if (type === 'separator' || type === 'continuationSeparator') continue;
             const text = extractTextFromXmlNode(en, ns);
             endnotes.push({ id, text, isEmpty: text.trim().length === 0 });
