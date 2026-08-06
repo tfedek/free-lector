@@ -146,7 +146,7 @@ const Exporter = (() => {
         const summaryData = [
             ['LEKTORSKI AUDIT - SAŽETAK'],
             [],
-            ['Naziv dokumenta', auditJson.document.name],
+            ['Naziv dokumenta', xlsSafe(auditJson.document.name)],
             ['Document ID', auditJson.document.document_id],
             ['Version ID', auditJson.document.version_id],
             ['Datum audita', new Date().toLocaleDateString('sr-Latn-RS')],
@@ -164,7 +164,7 @@ const Exporter = (() => {
             ['Vizuelni pregled', auditJson.audit_status.visual_review],
             [],
             ['OPSEG'],
-            ['Napomena', auditJson.scope.note],
+            ['Napomena', xlsSafe(auditJson.scope.note)],
             [],
             ['REZULTATI'],
             ['Ukupno nalaza', auditJson.summary.total_occurrences],
@@ -185,7 +185,7 @@ const Exporter = (() => {
             ['Proveriti otvoreno', auditJson.summary.verify_open != null ? auditJson.summary.verify_open : ''],
             ['Proveriti ukupno', auditJson.summary.verify_total != null ? auditJson.summary.verify_total : ''],
             [],
-            ['Završna procena', auditJson.summary.final_assessment],
+            ['Završna procena', xlsSafe(auditJson.summary.final_assessment)],
         ];
         const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
         ws1['!cols'] = [{ wch: 25 }, { wch: 70 }];
@@ -394,7 +394,9 @@ const Exporter = (() => {
     }
 
     function xlsSafe(v) {
-        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return "'" + v;
+        if (typeof v !== 'string') return v;
+        const t = v.replace(/^[\s\u00A0]+/, '');
+        if (/^[=+\-@\t\r]/.test(t)) return "'" + v;
         return v;
     }
 

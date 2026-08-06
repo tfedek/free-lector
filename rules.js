@@ -853,7 +853,7 @@ const RuleEngine = (() => {
                 }
                 const nsa = /([,;:])([^\s\d"'\u201C\u201D\u201E\u2019)\]])/g;
                 while ((m = nsa.exec(text)) !== null) {
-                    if (text.substring(Math.max(0,m.index-10),m.index+10).match(/https?:|:\\/)) continue;
+                    if (text.substring(Math.max(0,m.index-10),m.index+10).match(/https?:|:\\|[0-9a-fA-F]{2}:[0-9a-fA-F]|(mailto|tel|urn|ftp|ssh|git|svn|site|inurl|filetype|intitle|intext|cache|link|info|related|define)\:/i)) continue;
                     const ctx = getContext(text, m.index, 20);
                     findings.push(makeFinding({ element: noteEl, category: 'Razmaci', priority: 'OBAVEZNO', confidence: 0.85, original: ctx, replacement: ctx.replace(/([,;:])(\S)/, '$1 $2'), rationale: `Nedostaje razmak posle \u201e${m[1]}\u201c u ${noteType.toLowerCase()}.`, autoFixable: true, ruleId: 'spacing_note' }));
                 }
