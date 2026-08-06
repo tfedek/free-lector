@@ -9,6 +9,7 @@
     let currentDocMap = null;
     let currentAuditJson = null;
     let auditInProgress = false;
+    let auditGeneration = 0;
 
     // DOM refs
     const dropZone = document.getElementById('drop-zone');
@@ -123,6 +124,7 @@
     runBtn.addEventListener('click', async () => {
         if (!currentFile || auditInProgress) return;
         auditInProgress = true; runBtn.disabled = true; runBtn.textContent = 'Audit u toku...';
+        const thisGeneration = ++auditGeneration;
 
         const options = {};
         document.querySelectorAll('[data-check]').forEach(cb => { options[cb.dataset.check] = cb.checked; });
@@ -136,10 +138,12 @@
         try {
             updateProgress(10, 'Parsiranje', 'Čitanje strukture...');
             currentDocMap = await DocumentParser.parse(currentFile);
+            if (thisGeneration !== auditGeneration) return;
             updateProgress(30, 'Struktura', `${currentDocMap.elements.length} elemenata`);
             assignSections(currentDocMap);
             updateProgress(50, 'Provere', 'Pokretanje pravila...');
             await sleep(50);
+            if (thisGeneration !== auditGeneration) return;
             const { findings, passedChecks } = RuleEngine.runAudit(currentDocMap, options);
             updateProgress(75, 'Filtriranje', `${findings.length} kandidata`);
             const verified = filterAndDeduplicateFindings(findings, currentDocMap);

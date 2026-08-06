@@ -402,6 +402,8 @@ const RuleEngine = (() => {
                     if (stack.length === 0) {
                         // Skip curly braces in code-like paragraphs
                         if (codeLike && (ch === '}' || ch === '{')) continue;
+                        // Skip ) used as list marker: 1) 2) a) b) etc.
+                        if (ch === ')' && i > 0 && /[\da-zA-Z\u0400-\u04FF]/.test(text[i-1]) && (i === 1 || /\s/.test(text[i-2]) || i-1 === 0)) continue;
                         findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
                     } else if (stack[stack.length-1].type !== closeIdx) {
                         const top = stack.pop();
