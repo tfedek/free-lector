@@ -1336,6 +1336,88 @@ test('Exporter workbook: document-controlled fields are string cells', () => {
 });
 
 // ==========================================
+// REGRESSION: Copilot+ChatGPT audit fixes
+// ==========================================
+section('\nCopilot+ChatGPT audit regresije:');
+
+test('([)] gives exactly 1 cross-bracket finding', () => {
+    const doc = makeDocMap([{text:'([)]'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade');
+    assert.strictEqual(bf.length, 1, 'Expected 1 finding for ([)], got ' + bf.length);
+});
+
+test('([]) gives 0 bracket findings', () => {
+    const doc = makeDocMap([{text:'([])'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade');
+    assert.strictEqual(bf.length, 0, 'Expected 0 findings for ([])');
+});
+
+test('({]} gives 2 findings: orphan ] and unclosed (', () => {
+    const doc = makeDocMap([{text:'({]}'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const bf = findings.filter(f=>f.category==='Zagrade');
+    assert.strictEqual(bf.length, 2, 'Expected 2 findings for ({]}, got ' + bf.length);
+});
+
+test('isCodeLike: interface User { has no curly-brace finding', () => {
+    const doc = makeDocMap([{text:'interface User {'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const curly = findings.filter(f=>f.category==='Zagrade' && f.original.includes('{'));
+    assert.strictEqual(curly.length, 0, 'interface should be code-like, no bracket finding');
+});
+
+test('isCodeLike: enum Role { has no curly-brace finding', () => {
+    const doc = makeDocMap([{text:'enum Role {'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const curly = findings.filter(f=>f.category==='Zagrade' && f.original.includes('{'));
+    assert.strictEqual(curly.length, 0, 'enum should be code-like');
+});
+
+test('isCodeLike: ordinary text { still reports', () => {
+    const doc = makeDocMap([{text:'Obican tekst {'}]);
+    const {findings} = RuleEngine.runAudit(doc, {brackets:true});
+    const curly = findings.filter(f=>f.category==='Zagrade');
+    assert(curly.length >= 1, 'Ordinary text with { should report');
+});
+
+test('Markdown: **bold** detected', () => {
+    const doc = makeDocMap([{text:'Ovo je **bold** tekst.'}]);
+    const {findings} = RuleEngine.runAudit(doc, {markdown:true});
+    assert(findings.some(f=>f.category==='Markdown artefakt'), '**bold** should be detected');
+});
+
+test('Markdown: **bold**. with trailing punct detected', () => {
+    const doc = makeDocMap([{text:'Ovo je **bold**.'}]);
+    const {findings} = RuleEngine.runAudit(doc, {markdown:true});
+    assert(findings.some(f=>f.category==='Markdown artefakt'), '**bold**. should be detected');
+});
+
+test('Markdown: **abc *def* ghi** nested detected', () => {
+    const doc = makeDocMap([{text:'**abc *def* ghi**'}]);
+    const {findings} = RuleEngine.runAudit(doc, {markdown:true});
+    assert(findings.some(f=>f.category==='Markdown artefakt'), 'Nested emphasis should be detected');
+});
+
+test('Markdown: 2 * 3 is not a false positive', () => {
+    const doc = makeDocMap([{text:'Rezultat je 2 * 3 = 6.'}]);
+    const {findings} = RuleEngine.runAudit(doc, {markdown:true});
+    const md = findings.filter(f=>f.category==='Markdown artefakt' && f.original.includes('*'));
+    assert.strictEqual(md.length, 0, '2 * 3 should not be markdown');
+});
+
+test('preset restore: basic toggle back gives basic', () => {
+    const basicPreset = require('./presets.js').BASIC_PRESET;
+    const fullPreset = require('./presets.js').FULL_PRESET;
+    // Simulate toggle: basic -> change -> back
+    const state = {...basicPreset, brackets: false}; // changed
+    state.brackets = true; // back to original
+    const matchesBasic = Object.keys(basicPreset).every(k => state[k] === basicPreset[k]);
+    assert(matchesBasic, 'State should match basic after toggle back');
+});
+
+// ==========================================
 // SUMMARY - run async tests then report
 // ==========================================
 

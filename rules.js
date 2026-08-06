@@ -224,8 +224,8 @@ const RuleEngine = (() => {
                     // Per-cell: Markdown artifacts
                     if (options.markdown && docMap.type !== 'markdown') {
                         const mdPatterns = [
-                            { re: /(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, desc: '**bold**' },
-                            { re: /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, desc: '*italic*' },
+                            { re: /(?:^|[\s(\[{])(\*\*(?:[^*]|\*(?!\*))+\*\*)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '**bold**' },
+                            { re: /(?:^|[\s(\[{])(\*(?:[^*])+\*)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '*italic*' },
                             { re: /\[([^\]]+)\]\([^)]+\)/g, desc: '[link](url)' },
                             { re: /```/g, desc: '```' },
                         ];
@@ -335,7 +335,7 @@ const RuleEngine = (() => {
             }
 
             if (options.markdown && docMap.type !== 'markdown') {
-                const mdPats = [/(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, /\[([^\]]+)\]\([^)]+\)/g, /```/g];
+                const mdPats = [/(?:^|[\s(\[{])(\*\*(?:[^*]|\*(?!\*))+\*\*)(?=[.,;:!?\s)\]}\-]|$)/gm, /(?:^|[\s(\[{])(\*(?:[^*])+\*)(?=[.,;:!?\s)\]}\-]|$)/gm, /\[([^\]]+)\]\([^)]+\)/g, /```/g];
                 for (const re of mdPats) { re.lastIndex=0; let mm; while ((mm=re.exec(text))!==null) { findings.push(makeFinding({ element: el, category: 'Markdown artefakt', priority: 'OBAVEZNO', confidence: 0.92, original: mm[0].trim(), replacement: '[ukloniti markdown]', rationale: `Markdown u ${loc}.`, ruleId: 'markdown_header_footer' })); } }
             }
 
@@ -361,7 +361,7 @@ const RuleEngine = (() => {
         function isCodeLike(text) {
             if (!text) return false;
             // Lines that look like programming code
-            if (/^\s*(if|else|for|while|do|switch|case|try|catch|finally|function|const|let|var|return|class|import|export|def|public|private|protected|void|int|string|bool|async|await)\b/.test(text)) return true;
+            if (/^\s*(if|else|for|while|do|switch|case|try|catch|finally|function|const|let|var|return|class|import|export|def|public|private|protected|void|int|string|bool|async|await|interface|type|enum|namespace|struct|record|package)\b/i.test(text)) return true;
             if (/^\s*[{}();]+\s*$/.test(text)) return true; // lone bracket lines
             if (/^\s*(\/\/|#|\/\*)/.test(text)) return true; // comments
             if (/\$\([^)\r\n]*\)\.|=>|->|\.then\(|\.catch\(|require\(|import\s+\{/.test(text)) return true; // JS/TS patterns
@@ -390,9 +390,19 @@ const RuleEngine = (() => {
                         if (ch === ')' && i > 0 && /[\da-zA-Z\u0400-\u04FF]/.test(text[i-1]) && (i === 1 || /\s/.test(text[i-2]) || i-1 === 0)) continue;
                         findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
                     } else if (stack[stack.length-1].type !== closeIdx) {
-                        const top = stack.pop();
-                        const expected = closeChars[top.type];
-                        findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(text, i, 40), replacement: `[pogrešan redosled: otvoreno \u201e${top.char}\u201c ali zatvoreno \u201e${ch}\u201c]`, rationale: `Ukrštene zagrade: ${top.char}...${ch} umesto ${top.char}...${expected}.`, ruleId: 'unbalanced_brackets_body' }));
+                        // Mismatch recovery: look deeper in stack for matching open
+                        let foundDeeper = -1;
+                        for (let s = stack.length - 2; s >= 0; s--) {
+                            if (stack[s].type === closeIdx) { foundDeeper = s; break; }
+                        }
+                        if (foundDeeper !== -1) {
+                            // Cross-bracket: report one finding, remove the matching deeper entry
+                            const crossItem = stack.splice(foundDeeper, 1)[0];
+                            findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(text, i, 40), replacement: `[ukrštene zagrade: ${crossItem.char}...${ch}]`, rationale: `Ukrštene zagrade: ${crossItem.char} na poziciji ${crossItem.pos} zatvorena sa ${ch} na poziciji ${i}.`, ruleId: 'unbalanced_brackets_body' }));
+                        } else {
+                            // No matching open found deeper - orphan close
+                            findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, i, 40), replacement: `[ukloniti višak \u201e${ch}\u201c]`, rationale: `Zatvorena zagrada ${ch} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
+                        }
                     } else {
                         stack.pop();
                     }
@@ -465,10 +475,10 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         if (docMap.type === 'markdown') return { findings, scannedCount, skippedCount };
         const patterns = [
-            { re: /(?:^|\s)\*\*[^*]+\*\*(?:\s|$)/gm, desc: '**bold**' },
-            { re: /(?:^|\s)\*[^*]+\*(?:\s|$)/gm, desc: '*italic*' },
-            { re: /(?:^|\s)__[^_]+__(?:\s|$)/gm, desc: '__bold__' },
-            { re: /(?:^|\s)_[^_]+_(?:\s|$)/gm, desc: '_italic_' },
+            { re: /(?:^|[\s(\[{])(\*\*(?:[^*]|\*(?!\*))+\*\*)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '**bold**' },
+            { re: /(?:^|[\s(\[{])(\*(?:[^*])+\*)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '*italic*' },
+            { re: /(?:^|[\s(\[{])(__(?:[^_]|_(?!_))+__)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '__bold__' },
+            { re: /(?:^|[\s(\[{])(_[^_]+_)(?=[.,;:!?\s)\]}\-]|$)/gm, desc: '_italic_' },
             { re: /^#{1,6}\s/gm, desc: '# naslov' },
             { re: /^\s*[-*+]\s/gm, desc: '- lista' },
             { re: /^\s*>\s/gm, desc: '> blockquote' },

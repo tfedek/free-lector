@@ -154,28 +154,34 @@
 
         try {
             updateProgress(10, 'Parsiranje', 'Čitanje strukture...');
-            currentDocMap = await DocumentParser.parse(currentFile);
+            const parsedDocMap = await DocumentParser.parse(currentFile);
             if (thisGeneration !== auditGeneration) return;
-            updateProgress(30, 'Struktura', `${currentDocMap.elements.length} elemenata`);
-            assignSections(currentDocMap);
+            updateProgress(30, 'Struktura', `${parsedDocMap.elements.length} elemenata`);
+            assignSections(parsedDocMap);
             updateProgress(50, 'Provere', 'Pokretanje pravila...');
             await sleep(50);
             if (thisGeneration !== auditGeneration) return;
-            const { findings, passedChecks } = RuleEngine.runAudit(currentDocMap, options);
+            const { findings, passedChecks } = RuleEngine.runAudit(parsedDocMap, options);
             updateProgress(75, 'Filtriranje', `${findings.length} kandidata`);
-            const verified = filterAndDeduplicateFindings(findings, currentDocMap);
+            const verified = filterAndDeduplicateFindings(findings, parsedDocMap);
             updateProgress(90, 'Izveštaj', 'Priprema...');
-            currentAuditJson = Exporter.buildAuditJson(currentDocMap, verified, passedChecks, options);
+            const auditJson = Exporter.buildAuditJson(parsedDocMap, verified, passedChecks, options);
             updateProgress(100, 'Gotovo', `${verified.length} nalaza`);
             await sleep(300);
-            displayResults(currentAuditJson);
+            if (thisGeneration !== auditGeneration) return;
+            currentDocMap = parsedDocMap;
+            currentAuditJson = auditJson;
+            displayResults(auditJson);
         } catch (err) {
+            if (thisGeneration !== auditGeneration) return;
             console.error(err);
             progressPhase.textContent = 'Greška'; progressText.textContent = err.message;
             progressFill.style.width = '0%'; progressFill.style.background = 'var(--danger)';
             setTimeout(() => { if (confirm(`Greška: ${err.message}\n\nPonovo?`)) resetState(); }, 500);
         } finally {
-            auditInProgress = false; runBtn.disabled = false; runBtn.textContent = 'Pokreni audit';
+            if (thisGeneration === auditGeneration) {
+                auditInProgress = false; runBtn.disabled = false; runBtn.textContent = 'Pokreni audit';
+            }
         }
     });
 
