@@ -1041,6 +1041,12 @@ const RuleEngine = (() => {
         return ctx;
     }
 
+    function isListMarkerClose(text, closeIndex) {
+        const lineStart = text.lastIndexOf('\n', closeIndex - 1) + 1;
+        const prefix = text.slice(lineStart, closeIndex);
+        return /^\s*(?:\d+|[IVXLCDM]+|\p{L})$/iu.test(prefix);
+    }
+
     function scanBrackets(text, opts) {
         // Unified bracket scanner - same logic for body, table cells, HF, notes
         // opts: { codeLike, skipListMarkers } (both default false)
@@ -1060,12 +1066,7 @@ const RuleEngine = (() => {
                     // Skip curly braces in code-like paragraphs
                     if (codeLike && (ch === '}' || ch === '{')) continue;
                     // Skip ) used as list marker: 1) a) etc.
-                    if (skipListMarkers && ch === ')') {
-                        // Check if ) is a list marker: 1) 10) a) iv) IV) α) etc.
-                        let j = i - 1;
-                        while (j >= 0 && /[\da-zA-Z\u0400-\u04FF\u0370-\u03FF]/.test(text[j])) j--;
-                        if (j < i - 1 && (j < 0 || /\s/.test(text[j]))) continue;
-                    }
+                    if (skipListMarkers && ch === ')' && isListMarkerClose(text, i)) continue;
                     errors.push({ type: 'orphan_close', position: i, closeChar: ch, openChar: null, openPosition: null });
                 } else if (stack[stack.length-1].type !== closeIdx) {
                     // Mismatch: look deeper for matching open
