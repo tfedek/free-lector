@@ -156,10 +156,10 @@ body {
 .final-assessment { font-size: 0.85rem; color: var(--gray-600); font-style: italic; }
 
 /* === Filters === */
-.filters-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 0.75rem 1.5rem; }
+.filters-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.75rem 1.5rem; }
 .filter-group { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
 .filter-group label { color: var(--gray-600); white-space: nowrap; }
-.filter-group select { padding: 0.3rem 0.5rem; border: 1px solid var(--gray-300); border-radius: var(--radius-sm); font-size: 0.8rem; }
+.filter-group select { padding: 0.3rem 0.5rem; border: 1px solid var(--gray-300); border-radius: var(--radius-sm); font-size: 0.8rem; background: white; }
 .auto-fix-label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
 
 /* === Results Table === */
