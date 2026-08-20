@@ -359,6 +359,22 @@ const RuleEngine = (() => {
         const findings = []; let scannedCount = 0, skippedCount = 0;
         const openChars = '([{'; const closeChars = ')]}';
         const names = {'(':'obla','[':'uglasta','{':'vitičasta'};
+
+        // Global balance: count all brackets across entire document
+        // If balanced globally, per-paragraph orphan/unclosed are likely cross-paragraph spans
+        const globalCount = { '(': 0, ')': 0, '[': 0, ']': 0, '{': 0, '}': 0 };
+        for (const el of docMap.elements) {
+            if (!el.text || el.type === 'table') continue;
+            for (const ch of el.text) {
+                if (ch in globalCount) globalCount[ch]++;
+            }
+        }
+        const globalBalanced = {
+            '(': globalCount['('] === globalCount[')'],
+            '[': globalCount['['] === globalCount[']'],
+            '{': globalCount['{'] === globalCount['}'],
+        };
+
         // Detect code-like paragraphs to skip curly braces
         function isCodeLike(text) {
             if (!text) return false;
@@ -382,8 +398,13 @@ const RuleEngine = (() => {
                 if (err.type === 'crossed') {
                     findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.95, original: getContext(text, err.position, 40), replacement: `[ukrštene zagrade: ${err.openChar}...${err.closeChar}]`, rationale: `Ukrštene zagrade: ${err.openChar} na poziciji ${err.openPosition} zatvorena sa ${err.closeChar} na poziciji ${err.position}.`, ruleId: 'unbalanced_brackets_body' }));
                 } else if (err.type === 'orphan_close') {
+                    // Skip if this bracket type is globally balanced (cross-paragraph span)
+                    const openChar = closeChars.indexOf(err.closeChar) !== -1 ? openChars[closeChars.indexOf(err.closeChar)] : null;
+                    if (openChar && globalBalanced[openChar]) continue;
                     findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, err.position, 40), replacement: `[ukloniti višak \u201e${err.closeChar}\u201c]`, rationale: `Zatvorena zagrada ${err.closeChar} bez odgovarajuće otvorene.`, ruleId: 'unbalanced_brackets_body' }));
                 } else if (err.type === 'unclosed_open') {
+                    // Skip if this bracket type is globally balanced (cross-paragraph span)
+                    if (globalBalanced[err.openChar]) continue;
                     findings.push(makeFinding({ element: el, category: 'Zagrade', priority: 'OBAVEZNO', confidence: 0.98, original: getContext(text, err.position, 40), replacement: `[dodati \u201e${err.closeChar}\u201c]`, rationale: `Otvorena ${names[err.openChar]||''} zagrada bez zatvorene.`, ruleId: 'unbalanced_brackets_body' }));
                 }
             }
