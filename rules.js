@@ -370,9 +370,9 @@ const RuleEngine = (() => {
             }
         }
         const globalBalanced = {
-            '(': globalCount['('] === globalCount[')'],
-            '[': globalCount['['] === globalCount[']'],
-            '{': globalCount['{'] === globalCount['}'],
+            '(': (globalCount['('] + globalCount[')'] >= 10) && Math.abs(globalCount['('] - globalCount[')']) <= 2,
+            '[': (globalCount['['] + globalCount[']'] >= 10) && Math.abs(globalCount['['] - globalCount[']']) <= 2,
+            '{': (globalCount['{'] + globalCount['}'] >= 10) && Math.abs(globalCount['{'] - globalCount['}']) <= 2,
         };
 
         // Detect code-like paragraphs to skip curly braces
