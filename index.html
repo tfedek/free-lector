@@ -213,11 +213,15 @@
         integrity="sha512-r22gChDnGvBylk90+2e/ycr3RVrDi8DIOkIGNhJlKfuyQM4tIRAI062MaV8sfjQKYVGjOBaZBOA87z+IhZE9DA=="
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
-    <!-- App modules -->
-    <script src="parser.js"></script>
-    <script src="rules.js?v=20260821"></script>
-    <script src="exporter.js"></script>
-    <script src="presets.js"></script>
-    <script src="app.js"></script>
+    <!-- App modules (cache-bust with timestamp) -->
+    <script>
+    (function() {
+        var v = Date.now();
+        var scripts = ['parser.js','rules.js','exporter.js','presets.js','app.js'];
+        scripts.forEach(function(s) {
+            document.write('<script src="' + s + '?v=' + v + '"><\/script>');
+        });
+    })();
+    </script>
 </body>
 </html>
